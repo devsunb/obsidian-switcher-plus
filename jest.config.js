@@ -28,4 +28,9 @@ module.exports = {
   },
   coveragePathIgnorePatterns: ['/node_modules/', '/dist/'],
   modulePathIgnorePatterns: ['/dist/'],
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    '/dist/',
+    'perf\\.test\\.ts$', // ignore performance test files, see jest.perf.config.js
+  ],
 };

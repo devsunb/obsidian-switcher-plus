@@ -18,7 +18,9 @@
     "test": "jest",
     "test:watch": "jest --watchAll",
     "test:cov": "serve coverage/lcov-report",
-    "dev": "onchange 'src/**/*.ts' -- run-s test lint bundle package-plugin"
+    "test:perf": "jest --config jest.perf.config.js",
+    "test:perf:update-baseline": "UPDATE_PERF_BASELINE=true npm run test:perf",
+    "dev": "onchange 'src/**/*.ts' -- run-s bundle package-plugin lint test"
   },
   "keywords": [
     "obsidian",
