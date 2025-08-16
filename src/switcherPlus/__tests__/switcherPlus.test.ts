@@ -1,5 +1,5 @@
 import SwitcherPlusPlugin from 'src/main';
-import { createSwitcherPlus, ModeHandler } from 'src/switcherPlus';
+import { createSwitcherPlus, HandlerRegistry, ModeHandler } from 'src/switcherPlus';
 import { getSystemSwitcherInstance } from 'src/utils';
 import { mock, mockClear, MockProxy } from 'jest-mock-extended';
 import { App, Chooser, QuickSwitcherPluginInstance, Scope } from 'obsidian';
@@ -127,6 +127,7 @@ describe('switcherPlus', () => {
     let sut: SwitcherPlus;
 
     beforeAll(() => {
+      HandlerRegistry.reset();
       sut = createSwitcherPlus(mockApp, mockPlugin);
     });
 

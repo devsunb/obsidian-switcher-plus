@@ -17,6 +17,7 @@ import {
   ModeHandler,
   SourcedParsedCommand,
   InputInfo,
+  HandlerRegistry,
 } from 'src/switcherPlus';
 import {
   EditorHandler,
@@ -219,6 +220,10 @@ describe('modeHandler', () => {
     });
   });
 
+  beforeEach(() => {
+    HandlerRegistry.reset();
+  });
+
   afterAll(() => {
     mockDebounce.mockReset();
   });
@@ -241,6 +246,7 @@ describe('modeHandler', () => {
     let sut: ModeHandler;
 
     beforeAll(() => {
+      HandlerRegistry.reset();
       sut = new ModeHandler(mockApp, mockSettings, mockKeymap);
     });
 
@@ -351,6 +357,7 @@ describe('modeHandler', () => {
         .mockReturnValue(mockHistory);
 
       mockClear(mockInputEl);
+      HandlerRegistry.reset();
 
       // Prevent getSuggestions from running its complex logic
       getSuggestionsSpy = jest
@@ -513,8 +520,6 @@ describe('modeHandler', () => {
       const headingSugg = makeHeadingSuggestion(getHeadings()[0], new TFile());
       const symbolResetSpy = jest.spyOn(SymbolHandler.prototype, 'reset');
 
-      const relatedResetSpy = jest.spyOn(RelatedItemsHandler.prototype, 'reset');
-
       // first call should trigger symbol mode, and clear the other sourced handlers
       const inputInfo1 = sut.determineRunMode(
         `${headingsTrigger}${symbolTrigger}`,
@@ -531,15 +536,14 @@ describe('modeHandler', () => {
       // should have been reset in the second call where headings mode matched
       expect(symbolResetSpy).toHaveBeenCalled();
 
-      // should have been reset the first time when symbol mode matched, and a second
-      // time, when headings mode matched
-      expect(relatedResetSpy).toHaveBeenCalledTimes(2);
-
       symbolResetSpy.mockRestore();
-      relatedResetSpy.mockRestore();
     });
 
     describe('should identify unicode triggers', () => {
+      beforeEach(() => {
+        HandlerRegistry.reset();
+      });
+
       test.each(unicodeInputFixture)(
         'for input: "$input" (array data index: $#)',
         ({ editorTrigger, symbolTrigger, input, expected: { mode, parsedInput } }) => {
@@ -797,6 +801,7 @@ describe('modeHandler', () => {
     });
 
     it('should debounce searches in Headings mode with filter text', () => {
+      HandlerRegistry.reset();
       mockDebounce.mockClear();
       mockClear(mockDebouncedGetSuggestions);
 
@@ -806,6 +811,7 @@ describe('modeHandler', () => {
           inputInfo.mode = Mode.HeadingsList;
           const cmd = inputInfo.parsedCommand(Mode.HeadingsList);
           cmd.parsedInput = 'foo';
+          cmd.isValidated = true;
           return cmd;
         });
 

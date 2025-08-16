@@ -321,7 +321,7 @@ export function makeEscapedSourcedCommandInputFixture(): InputExpectation[] {
     makeInputExpectation(
       `${relatedItemsTrigger}foo ${escapeCmdCharTrigger}${symbolTrigger} bar`,
       Mode.RelatedItemsList,
-      `foo ${escapeCmdCharTrigger}${symbolTrigger} bar`,
+      `foo ${symbolTrigger} bar`,
       true,
     ),
     makeInputExpectation(

@@ -1,23 +1,18 @@
 import { SwitcherPlusKeymap } from './switcherPlusKeymap';
 import { InputInfo, SourcedParsedCommand } from './inputInfo';
 import { SwitcherPlusSettings } from 'src/settings';
+import { getCommandDefinitions } from './commandDefinitions';
+import { HandlerRegistry } from './handlerRegistry';
 import {
   Handler,
-  WorkspaceHandler,
-  HeadingsHandler,
   EditorHandler,
-  RelatedItemsHandler,
-  SymbolHandler,
   BookmarksHandler,
-  CommandHandler,
-  VaultHandler,
   StandardExHandler,
 } from 'src/Handlers';
 import {
   isSymbolSuggestion,
   escapeRegExp,
   isExSuggestion,
-  isOfType,
   isTFile,
   ComponentManager,
   getTFileFromLeaf,
@@ -63,9 +58,11 @@ export class ModeHandler implements ModeDispatcher {
     return previousInputInfoByMode;
   }
 
-  private handlersByMode: Map<Mode, Handler<AnySuggestion>>;
-  private handlersByType: Map<SuggestionType, Handler<AnySuggestion>>;
-  private handlersByCommand: Map<string, Handler<AnySuggestion>>;
+  private _handlerRegistry: HandlerRegistry;
+  public get handlerRegistry(): HandlerRegistry {
+    return this._handlerRegistry;
+  }
+
   private debouncedGetSuggestions: Debouncer<
     [InputInfo, Chooser<AnySuggestion>, SwitcherPlus],
     void
@@ -79,47 +76,10 @@ export class ModeHandler implements ModeDispatcher {
     private settings: SwitcherPlusSettings,
     public exKeymap: SwitcherPlusKeymap,
   ) {
-    const handlersByMode = new Map<Mode, Handler<AnySuggestion>>([
-      [Mode.SymbolList, new SymbolHandler(app, settings)],
-      [Mode.WorkspaceList, new WorkspaceHandler(app, settings)],
-      [Mode.HeadingsList, new HeadingsHandler(app, settings)],
-      [Mode.EditorList, new EditorHandler(app, settings)],
-      [Mode.BookmarksList, new BookmarksHandler(app, settings)],
-      [Mode.CommandList, new CommandHandler(app, settings)],
-      [Mode.RelatedItemsList, new RelatedItemsHandler(app, settings)],
-      [Mode.VaultList, new VaultHandler(app, settings)],
-      [Mode.Standard, new StandardExHandler(app, settings)],
-    ]);
+    const commandDefinitions = getCommandDefinitions(settings);
+    HandlerRegistry.initialize(app, settings, commandDefinitions);
 
-    this.handlersByMode = handlersByMode;
-    this.handlersByType = new Map<SuggestionType, Handler<AnySuggestion>>([
-      [SuggestionType.CommandList, handlersByMode.get(Mode.CommandList)],
-      [SuggestionType.EditorList, handlersByMode.get(Mode.EditorList)],
-      [SuggestionType.HeadingsList, handlersByMode.get(Mode.HeadingsList)],
-      [SuggestionType.RelatedItemsList, handlersByMode.get(Mode.RelatedItemsList)],
-      [SuggestionType.Bookmark, handlersByMode.get(Mode.BookmarksList)],
-      [SuggestionType.SymbolList, handlersByMode.get(Mode.SymbolList)],
-      [SuggestionType.WorkspaceList, handlersByMode.get(Mode.WorkspaceList)],
-      [SuggestionType.VaultList, handlersByMode.get(Mode.VaultList)],
-      [SuggestionType.File, handlersByMode.get(Mode.Standard)],
-      [SuggestionType.Alias, handlersByMode.get(Mode.Standard)],
-    ]);
-
-    this.handlersByCommand = new Map<string, Handler<AnySuggestion>>([
-      [settings.editorListCommand, handlersByMode.get(Mode.EditorList)],
-      [settings.workspaceListCommand, handlersByMode.get(Mode.WorkspaceList)],
-      [settings.headingsListCommand, handlersByMode.get(Mode.HeadingsList)],
-      [settings.bookmarksListCommand, handlersByMode.get(Mode.BookmarksList)],
-      [settings.commandListCommand, handlersByMode.get(Mode.CommandList)],
-      [settings.symbolListCommand, handlersByMode.get(Mode.SymbolList)],
-      [settings.symbolListActiveEditorCommand, handlersByMode.get(Mode.SymbolList)],
-      [settings.relatedItemsListCommand, handlersByMode.get(Mode.RelatedItemsList)],
-      [settings.vaultListCommand, handlersByMode.get(Mode.VaultList)],
-      [
-        settings.relatedItemsListActiveEditorCommand,
-        handlersByMode.get(Mode.RelatedItemsList),
-      ],
-    ]);
+    this._handlerRegistry = HandlerRegistry.getInstance();
 
     this.debouncedGetSuggestions = debounce(
       this.getSuggestions.bind(this),
@@ -159,8 +119,8 @@ export class ModeHandler implements ModeDispatcher {
     // This method should only run once per session opening.
     this.sessionOpts.mode = null;
 
-    const lastInputText = this.previousInputHistory[mode]?.inputText;
-    const handler = this.getHandler(mode);
+    const prevInputText = this.previousInputHistory[mode]?.inputText;
+    const handler = this.handlerRegistry.getHandler(mode);
     const commandString =
       mode !== Mode.Standard ? handler.getCommandString(this.sessionOpts) : '';
 
@@ -168,8 +128,8 @@ export class ModeHandler implements ModeDispatcher {
       (mode === Mode.CommandList && this.settings.preserveCommandPaletteLastInput) ||
       (mode !== Mode.CommandList && this.settings.preserveQuickSwitcherLastInput);
 
-    if (shouldPreserveInput && lastInputText) {
-      inputEl.value = lastInputText;
+    if (shouldPreserveInput && prevInputText) {
+      inputEl.value = prevInputText;
       const selectionStart = commandString?.length ?? 0;
       inputEl.setSelectionRange(selectionStart, inputEl.value.length);
     } else if (commandString) {
@@ -250,7 +210,7 @@ export class ModeHandler implements ModeDispatcher {
     activeLeaf: WorkspaceLeaf,
   ): void {
     const { mode } = inputInfo;
-    const handler = this.getHandler(mode);
+    const handler = this.handlerRegistry.getHandler(mode);
     const facetList = handler?.getAvailableFacets(inputInfo) ?? [];
 
     const handleFacetKeyEvent = (facets: Facet[], isReset: boolean) => {
@@ -294,6 +254,7 @@ export class ModeHandler implements ModeDispatcher {
 
   renderSuggestion(sugg: AnySuggestion, parentEl: HTMLElement): boolean {
     const {
+      handlerRegistry,
       inputInfo,
       settings: { overrideStandardModeRendering },
     } = this;
@@ -305,7 +266,7 @@ export class ModeHandler implements ModeDispatcher {
     if (sugg === null) {
       if (isHeadingMode) {
         // in Headings mode, a null suggestion should be rendered to allow for note creation
-        const headingHandler = this.getHandler(mode);
+        const headingHandler = handlerRegistry.getHandler(mode);
         const searchText = inputInfo.parsedCommand(mode)?.parsedInput;
 
         headingHandler.renderFileCreationSuggestion(parentEl, searchText);
@@ -315,7 +276,7 @@ export class ModeHandler implements ModeDispatcher {
       if (overrideStandardModeRendering || isHeadingMode || isExSuggestion(sugg)) {
         // when overriding standard mode, or, in Headings mode, StandardExHandler should
         // handle rendering for FileSuggestion and Alias suggestion
-        const handler = this.getHandler(sugg);
+        const handler = handlerRegistry.getHandler(sugg);
         if (handler) {
           handled = handler.renderSuggestion(sugg, parentEl);
         }
@@ -327,6 +288,7 @@ export class ModeHandler implements ModeDispatcher {
 
   onChooseSuggestion(sugg: AnySuggestion, evt: MouseEvent | KeyboardEvent): boolean {
     const {
+      handlerRegistry,
       inputInfo,
       settings: { overrideStandardModeBehaviors },
     } = this;
@@ -339,7 +301,7 @@ export class ModeHandler implements ModeDispatcher {
       if (this.noResultActionModes.includes(mode)) {
         // In these modes, a null suggestion indicates that
         // the <enter to create> UI action was chosen
-        const handler = this.getHandler(mode);
+        const handler = handlerRegistry.getHandler(mode);
         handled = !!handler?.onNoResultsCreateAction(inputInfo, evt);
       }
     } else if (!systemBehaviorPreferred.has(sugg.type)) {
@@ -347,7 +309,7 @@ export class ModeHandler implements ModeDispatcher {
         // when overriding standard mode, or, in Headings mode, StandardExHandler should
         // handle the onChoose action for File and Alias suggestion so that
         // the preferOpenInNewPane setting can be handled properly
-        const handler = this.getHandler(sugg);
+        const handler = handlerRegistry.getHandler(sugg);
         if (handler) {
           handled = handler.onChooseSuggestion(sugg, evt);
         }
@@ -384,7 +346,7 @@ export class ModeHandler implements ModeDispatcher {
     chooser.setSuggestions([]);
 
     const { mode } = inputInfo;
-    const suggestions = this.getHandler(mode).getSuggestions(inputInfo);
+    const suggestions = this.handlerRegistry.getHandler(mode).getSuggestions(inputInfo);
 
     const setSuggestions = (suggs: AnySuggestion[]) => {
       if (suggs?.length) {
@@ -480,7 +442,7 @@ export class ModeHandler implements ModeDispatcher {
         this.removeEscapeCommandCharFromInput(inputInfo, config.escapeCmdChar, cmdStr);
         cmdStr = null;
       } else {
-        handler = this.getHandler(cmdStr);
+        handler = this.handlerRegistry.getHandler(cmdStr);
       }
     }
 
@@ -508,8 +470,8 @@ export class ModeHandler implements ModeDispatcher {
     config: SwitcherPlusSettings,
   ): boolean {
     let isValidated = false;
-    const unmatchedHandlers: Handler<AnySuggestion>[] = [];
     const searchText = inputInfo.inputTextSansEscapeChar;
+    const { handlerRegistry } = this;
 
     // Headings, Bookmarks, and EditorList mode can have an embedded command
     const supportedModes = [
@@ -539,7 +501,7 @@ export class ModeHandler implements ModeDispatcher {
           this.removeEscapeCommandCharFromInput(inputInfo, config.escapeCmdChar, cmdStr);
         } else {
           const filterText = searchText.slice(re.lastIndex);
-          const handler = this.getHandler(cmdStr);
+          const handler = handlerRegistry.getHandler(cmdStr);
 
           if (handler) {
             const cmd = handler.validateCommand(
@@ -552,9 +514,8 @@ export class ModeHandler implements ModeDispatcher {
 
             isValidated = !!cmd?.isValidated;
 
-            // Find all sourced handlers that did not match
-            const unmatched = this.getSourcedHandlers().filter((v) => v !== handler);
-            unmatchedHandlers.push(...unmatched);
+            // Reset unmatched handlers
+            handlerRegistry.resetSourcedHandlers([handler]);
           }
 
           break;
@@ -562,9 +523,6 @@ export class ModeHandler implements ModeDispatcher {
       }
     }
 
-    // if unmatchedHandlers has items then there was a match, so reset all others
-    // otherwise reset all sourced handlers
-    this.resetSourcedHandlers(unmatchedHandlers.length ? unmatchedHandlers : null);
     return isValidated;
   }
 
@@ -595,21 +553,15 @@ export class ModeHandler implements ModeDispatcher {
   reset(): void {
     this._inputInfo = new InputInfo();
     this.sessionOpts = {};
-    this.resetSourcedHandlers();
-  }
-
-  resetSourcedHandlers(handlers?: Handler<AnySuggestion>[]): void {
-    handlers = handlers ?? this.getSourcedHandlers();
-    handlers.forEach((handler) => handler?.reset());
-  }
-
-  getSourcedHandlers(): Handler<AnySuggestion>[] {
-    return getSourcedModes().map((v) => this.getHandler(v));
+    this.handlerRegistry.resetSourcedHandlers();
   }
 
   addWorkspaceEnvLists(inputInfo: InputInfo): InputInfo {
     if (inputInfo) {
-      const openEditors = (this.getHandler(Mode.EditorList) as EditorHandler).getItems();
+      const { handlerRegistry } = this;
+      const openEditors = (
+        handlerRegistry.getHandler(Mode.EditorList) as EditorHandler
+      ).getItems();
 
       // Create a Set containing the files from all the open editors
       const openEditorFilesSet = openEditors
@@ -619,7 +571,7 @@ export class ModeHandler implements ModeDispatcher {
 
       // Get the list of bookmarks split into file bookmarks and non-file bookmarks
       const { fileBookmarks, nonFileBookmarks } = (
-        this.getHandler(Mode.BookmarksList) as BookmarksHandler
+        handlerRegistry.getHandler(Mode.BookmarksList) as BookmarksHandler
       ).getItems(null);
 
       const lists = inputInfo.currentWorkspaceEnvList;
@@ -745,15 +697,21 @@ export class ModeHandler implements ModeDispatcher {
       return;
     }
 
-    const { currentWorkspaceEnvList } = this.inputInfo;
+    const {
+      handlerRegistry,
+      inputInfo: { currentWorkspaceEnvList },
+    } = this;
+
     for (let i = 0; i < suggestions.length; i++) {
       const sugg = suggestions[i];
 
       if (isBookmarksSuggestion(sugg)) {
-        const handler = this.getHandler(Mode.BookmarksList) as BookmarksHandler;
+        const handler = handlerRegistry.getHandler(
+          Mode.BookmarksList,
+        ) as BookmarksHandler;
         handler.addPropertiesToStandardSuggestions(currentWorkspaceEnvList, sugg);
       } else if (isFileSuggestion(sugg) || isAliasSuggestion(sugg)) {
-        const handler = this.getHandler(Mode.Standard) as StandardExHandler;
+        const handler = handlerRegistry.getHandler(Mode.Standard) as StandardExHandler;
         handler.addPropertiesToStandardSuggestions(currentWorkspaceEnvList, sugg);
       }
     }
@@ -780,7 +738,7 @@ export class ModeHandler implements ModeDispatcher {
       return;
     }
 
-    const openState = this.getHandler(sugg)?.getOpenViewState(sugg, {
+    const openState = this.handlerRegistry.getHandler(sugg)?.getOpenViewState(sugg, {
       active: false,
       focus: false,
     });
@@ -797,20 +755,5 @@ export class ModeHandler implements ModeDispatcher {
         reason,
       );
     });
-  }
-
-  private getHandler(kind: Mode | AnySuggestion | string): Handler<AnySuggestion> {
-    let handler: Handler<AnySuggestion>;
-    const { handlersByMode, handlersByType, handlersByCommand } = this;
-
-    if (typeof kind === 'number') {
-      handler = handlersByMode.get(kind);
-    } else if (isOfType<AnySuggestion>(kind, 'type')) {
-      handler = handlersByType.get(kind.type);
-    } else if (typeof kind === 'string') {
-      handler = handlersByCommand.get(kind);
-    }
-
-    return handler;
   }
 }
