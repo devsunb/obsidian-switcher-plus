@@ -35,7 +35,7 @@ export interface ParserCommand {
    * - `sourced`: The command is triggered by a string and operates on a "source" suggestion
    *   (e.g., showing symbols for a specific file).
    */
-  type: 'prefix' | 'sourced';
+  type: 'prefix' | 'sourced' | 'none';
 
   /**
    * A function that returns the command string (e.g., 'edt ') that triggers this command.
@@ -90,10 +90,9 @@ export interface CommandDefinition {
   ownSuggestionTypes?: SuggestionType[];
 
   /**
-   * An optional definition for how this command can be triggered from the switcher input.
-   * If not provided, the command can only be activated through the command palette or a hotkey.
+   * A definition for how this command can be triggered from the switcher input.
    */
-  parserCommand?: ParserCommand;
+  parserCommand: ParserCommand;
 }
 
 /**
@@ -111,6 +110,10 @@ export function getCommandDefinitions(config: SwitcherPlusSettings): CommandDefi
       iconId: 'lucide-file-search',
       handlerClass: StandardExHandler,
       ownSuggestionTypes: [SuggestionType.Alias, SuggestionType.File],
+      parserCommand: {
+        type: 'none',
+        getCommandStr: () => '',
+      },
     },
     {
       commandId: 'switcher-plus:open-editors',

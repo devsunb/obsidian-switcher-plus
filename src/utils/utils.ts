@@ -102,10 +102,6 @@ export function isTFile(obj: unknown): obj is TFile {
   return isOfType<TFile>(obj, 'extension');
 }
 
-export function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 export function getInternalPluginById(app: App, id: string): InstalledPlugin {
   return app?.internalPlugins?.getPluginById(id);
 }

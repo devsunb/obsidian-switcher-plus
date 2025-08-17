@@ -1,7 +1,7 @@
 import { App } from 'obsidian';
-import { CommandDefinition } from 'src/switcherPlus/commandDefinitions';
+import { CommandDefinition } from '../commandDefinitions';
 import { Handler } from 'src/Handlers/handler';
-import { HandlerRegistry } from 'src/switcherPlus/handlerRegistry';
+import { HandlerRegistry } from '../handlerRegistry';
 import { SwitcherPlusSettings } from 'src/settings';
 import { mock, MockProxy } from 'jest-mock-extended';
 import { AnySuggestion, Mode, SuggestionType } from 'src/types';
@@ -61,10 +61,8 @@ describe('HandlerRegistry', () => {
   });
 
   describe('Initialization', () => {
-    it('should throw an error if getInstance is called before initialization', () => {
-      expect(() => HandlerRegistry.getInstance()).toThrow(
-        'Switcher++: HandlerRegistry not initialized. Call initialize() first.',
-      );
+    it('should return null if getInstance is called before initialization', () => {
+      expect(HandlerRegistry.getInstance()).toBeNull();
     });
 
     it('should initialize the singleton instance', () => {
@@ -97,9 +95,7 @@ describe('HandlerRegistry', () => {
 
       HandlerRegistry.reset();
 
-      expect(() => HandlerRegistry.getInstance()).toThrow(
-        'Switcher++: HandlerRegistry not initialized. Call initialize() first.',
-      );
+      expect(HandlerRegistry.getInstance()).toBeNull();
 
       HandlerRegistry.initialize(mockApp, mockConfig, mockCommandDefinitions);
       const instance2 = HandlerRegistry.getInstance();

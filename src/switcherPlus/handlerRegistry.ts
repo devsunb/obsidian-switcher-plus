@@ -77,18 +77,10 @@ export class HandlerRegistry {
 
   /**
    * Returns the singleton instance of the HandlerRegistry.
-   * @returns The singleton instance.
-   * @throws {Error} If the registry has not been initialized.
+   * @returns The singleton instance if initialized. Otherwise null.
    */
-  static getInstance(): HandlerRegistry {
-    if (!this.instance) {
-      // Enforcing initialization ensures that the registry is always in a valid state when accessed.
-      throw new Error(
-        'Switcher++: HandlerRegistry not initialized. Call initialize() first.',
-      );
-    }
-
-    return this.instance;
+  static getInstance(): HandlerRegistry | null {
+    return this.instance ?? null;
   }
 
   /**

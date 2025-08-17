@@ -6,3 +6,4 @@ export * from './mobileLauncher';
 export * from './emptyTabMonitor';
 export * from './handlerRegistry';
 export * from './commandDefinitions';
+export * from './inputParser';
