@@ -1,5 +1,5 @@
 import { SwitcherPlusKeymap } from './switcherPlusKeymap';
-import { InputInfo, SourcedParsedCommand } from './inputInfo';
+import { InputInfo, SourcedParsedCommand, WorkspaceEnvList } from './inputInfo';
 import { SwitcherPlusSettings } from 'src/settings';
 import { getCommandDefinitions } from './commandDefinitions';
 import { HandlerRegistry } from './handlerRegistry';
@@ -44,6 +44,8 @@ import {
   Platform,
   PaneType,
   SplitDirection,
+  Workspace,
+  Vault,
 } from 'obsidian';
 
 const previousInputInfoByMode = {} as Record<Mode, InputInfo>;
@@ -72,6 +74,8 @@ export class ModeHandler implements ModeDispatcher {
     [InputInfo, Chooser<AnySuggestion>, SwitcherPlus],
     void
   >;
+
+  private workspaceEnvList: WorkspaceEnvList = null;
 
   sessionOpts: SessionOpts = {};
   noResultActionModes = [Mode.HeadingsList, Mode.WorkspaceList];
@@ -104,12 +108,20 @@ export class ModeHandler implements ModeDispatcher {
   }
 
   onOpen(): void {
-    const { exKeymap, settings } = this;
+    const { app, exKeymap, handlerRegistry, settings } = this;
     exKeymap.isOpen = true;
 
     if (settings.quickFilters?.shouldResetActiveFacets) {
       Object.values(settings.quickFilters.facetList).forEach((f) => (f.isActive = false));
     }
+
+    this.workspaceEnvList = this.buildWorkspaceEnvList(
+      app.workspace,
+      app.vault,
+      app.viewRegistry,
+      handlerRegistry,
+      settings,
+    );
   }
 
   onClose() {
@@ -120,7 +132,7 @@ export class ModeHandler implements ModeDispatcher {
   setSessionOpenMode(chooser: Chooser<AnySuggestion>, sessionOpts: SessionOpts): void {
     this.reset();
     chooser?.setSuggestions([]);
-    this.sessionOpts = sessionOpts ?? {};
+    this.sessionOpts = Object.assign({}, sessionOpts);
   }
 
   setInitialInputForSession(inputEl: HTMLInputElement): void {
@@ -346,7 +358,7 @@ export class ModeHandler implements ModeDispatcher {
       return info;
     }
 
-    this.addWorkspaceEnvLists(info);
+    info.currentWorkspaceEnvList = this.workspaceEnvList;
     this.inputParser.parseInputForMode(info, activeSugg, activeLeaf);
 
     return info;
@@ -423,42 +435,53 @@ export class ModeHandler implements ModeDispatcher {
     this.handlerRegistry.resetSourcedHandlers();
   }
 
-  addWorkspaceEnvLists(inputInfo: InputInfo): InputInfo {
-    if (inputInfo) {
-      const { handlerRegistry } = this;
-      const openEditors = (
-        handlerRegistry.getHandler(Mode.EditorList) as EditorHandler
-      ).getItems();
+  buildWorkspaceEnvList(
+    workspace: Workspace,
+    vault: Vault,
+    viewRegistry: ViewRegistry,
+    handlerRegistry: HandlerRegistry,
+    config: SwitcherPlusSettings,
+  ): WorkspaceEnvList {
+    const openEditors = (
+      handlerRegistry.getHandler(Mode.EditorList) as EditorHandler
+    ).getItems();
 
-      // Create a Set containing the files from all the open editors
-      const openEditorFilesSet = openEditors
-        .map((leaf) => getTFileFromLeaf(leaf))
-        .filter((file) => !!file)
-        .reduce((collection, file) => collection.add(file), new Set<TFile>());
+    // Create a Set containing the files from all the open editors
+    const openEditorFilesSet = openEditors.reduce((collection, leaf) => {
+      const file = getTFileFromLeaf(leaf);
+      if (file) {
+        collection.add(file);
+      }
+      return collection;
+    }, new Set<TFile>());
 
-      // Get the list of bookmarks split into file bookmarks and non-file bookmarks
-      const { fileBookmarks, nonFileBookmarks } = (
-        handlerRegistry.getHandler(Mode.BookmarksList) as BookmarksHandler
-      ).getItems(null);
+    // Get the list of bookmarks split into file bookmarks and non-file bookmarks
+    const { fileBookmarks, nonFileBookmarks } = (
+      handlerRegistry.getHandler(Mode.BookmarksList) as BookmarksHandler
+    ).getItems(null);
 
-      const lists = inputInfo.currentWorkspaceEnvList;
-      lists.openWorkspaceLeaves = new Set(openEditors);
-      lists.openWorkspaceFiles = openEditorFilesSet;
-      lists.fileBookmarks = fileBookmarks;
-      lists.nonFileBookmarks = nonFileBookmarks;
+    const attachmentFileExtensions = this.getAttachmentFileExtensions(
+      viewRegistry,
+      config.fileExtAllowList,
+    );
 
-      lists.attachmentFileExtensions = this.getAttachmentFileExtensions(
-        this.app.viewRegistry,
-        this.settings.fileExtAllowList,
-      );
+    // Get the list of recently closed files excluding the currently open ones
+    const maxCount = openEditorFilesSet.size + config.maxRecentFileSuggestionsOnInit;
+    const mostRecentFiles = this.getRecentFiles(
+      workspace,
+      vault,
+      openEditorFilesSet,
+      maxCount,
+    );
 
-      // Get the list of recently closed files excluding the currently open ones
-      const maxCount =
-        openEditorFilesSet.size + this.settings.maxRecentFileSuggestionsOnInit;
-      lists.mostRecentFiles = this.getRecentFiles(openEditorFilesSet, maxCount);
-    }
-
-    return inputInfo;
+    return {
+      openWorkspaceLeaves: new Set(openEditors),
+      openWorkspaceFiles: openEditorFilesSet,
+      fileBookmarks,
+      nonFileBookmarks,
+      attachmentFileExtensions,
+      mostRecentFiles,
+    };
   }
 
   getAttachmentFileExtensions(
@@ -485,12 +508,16 @@ export class ModeHandler implements ModeDispatcher {
     return extList;
   }
 
-  getRecentFiles(ignoreFiles: Set<TFile>, maxCount = 75): Set<TFile> {
+  getRecentFiles(
+    workspace: Workspace,
+    vault: Vault,
+    ignoreFiles: Set<TFile>,
+    maxCount = 75,
+  ): Set<TFile> {
     ignoreFiles = ignoreFiles ?? new Set<TFile>();
     const recentFiles = new Set<TFile>();
 
     if (maxCount > 0) {
-      const { workspace, vault } = this.app;
       const recentFilePaths = workspace.getRecentFiles({
         showMarkdown: true,
         showCanvas: true,
@@ -512,11 +539,11 @@ export class ModeHandler implements ModeDispatcher {
   }
 
   inputTextForStandardMode(input: string): string {
-    const { mode, inputTextSansEscapeChar } = this.inputInfo;
+    const { mode, cleanInput } = this.inputInfo;
     let searchText = input;
 
-    if (mode === Mode.Standard && inputTextSansEscapeChar?.length) {
-      searchText = inputTextSansEscapeChar;
+    if (mode === Mode.Standard && cleanInput?.length) {
+      searchText = cleanInput;
     }
 
     return searchText;
@@ -531,10 +558,10 @@ export class ModeHandler implements ModeDispatcher {
     const mode = inputInfo.mode;
     let file: TFile = null;
 
-    // .inputTextSansEscapeChar holds a version of inputText that is
+    // .cleanInput holds a version of inputText that is
     // suitable for Standard mode. This covers the case when the mode is Standard
     //  and inputText is needed for global search.
-    let parsedInput = inputInfo.inputTextSansEscapeChar;
+    let parsedInput = inputInfo.cleanInput;
 
     if (mode !== Mode.Standard) {
       // Custom modes contain the filtered text that can be retrieved directly

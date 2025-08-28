@@ -217,6 +217,7 @@ describe('modeHandler', () => {
       preserveCommandPaletteLastInput: false,
       preserveQuickSwitcherLastInput: false,
       fileExtAllowList: [],
+      maxRecentFileSuggestionsOnInit: 2,
     });
   });
 
@@ -296,6 +297,28 @@ describe('modeHandler', () => {
 
       getActiveSuggestionSpy.mockRestore();
       getSuggestionSpy.mockRestore();
+    });
+  });
+
+  describe('retrieving input text for Standard mode', () => {
+    let sut: ModeHandler;
+
+    beforeAll(() => {
+      HandlerRegistry.reset();
+      sut = new ModeHandler(mockApp, mockSettings, mock<SwitcherPlusKeymap>());
+    });
+
+    it('should return the cleanInput when in standard mode', () => {
+      const expected = 'search text';
+      const inputInfo = new InputInfo('input text', Mode.Standard);
+      inputInfo.cleanInput = expected;
+      const spy = jest.spyOn(sut, 'inputInfo', 'get').mockReturnValue(inputInfo);
+
+      const result = sut.inputTextForStandardMode('input text');
+
+      expect(result).toBe(expected);
+
+      spy.mockRestore();
     });
   });
 
@@ -1126,13 +1149,17 @@ describe('modeHandler', () => {
     });
 
     it('should not throw with falsy values', () => {
-      expect(() => sut.getRecentFiles(null)).not.toThrow();
+      expect(() => sut.getRecentFiles(mockWorkspace, mockVault, null)).not.toThrow();
     });
 
     it('should not include ignored files', () => {
       const ignoredFile = Object.values(fileData)[0];
 
-      const results = sut.getRecentFiles(new Set([ignoredFile]));
+      const results = sut.getRecentFiles(
+        mockWorkspace,
+        mockVault,
+        new Set([ignoredFile]),
+      );
 
       const found = results.has(ignoredFile);
 
@@ -1141,15 +1168,14 @@ describe('modeHandler', () => {
     });
   });
 
-  describe('addWorkspaceEnvLists', () => {
+  describe('buildWorkspaceEnvList', () => {
     let sut: ModeHandler;
 
     beforeAll(() => {
       sut = new ModeHandler(mockApp, mockSettings, null);
     });
 
-    it('should add file list', () => {
-      const inputInfo = new InputInfo();
+    it('should build a workspace environment list', () => {
       const editors = [makeLeaf()];
       const editorFiles = editors.map((v) => v.view.file);
       const recentFiles = new Set([new TFile(), new TFile(), ...editorFiles]);
@@ -1180,9 +1206,22 @@ describe('modeHandler', () => {
         .spyOn(sut, 'getRecentFiles')
         .mockReturnValueOnce(recentFiles);
 
-      sut.addWorkspaceEnvLists(inputInfo);
+      const result = sut.buildWorkspaceEnvList(
+        mockWorkspace,
+        mockVault,
+        mockApp.viewRegistry,
+        sut.handlerRegistry,
+        mockSettings,
+      );
 
-      expect(inputInfo.currentWorkspaceEnvList).toMatchObject({
+      expect(recentSpy).toHaveBeenCalledWith(
+        mockWorkspace,
+        mockVault,
+        expect.any(Set),
+        expect.any(Number),
+      );
+
+      expect(result).toMatchObject({
         openWorkspaceLeaves: new Set(editors),
         openWorkspaceFiles: new Set(editorFiles),
         mostRecentFiles: new Set(recentFiles),
@@ -1198,15 +1237,20 @@ describe('modeHandler', () => {
     });
 
     test('.openWorkspaceFiles should include files from deferred views', () => {
-      const inputInfo = new InputInfo();
       const mockFile = new TFile();
       const editorSpy = jest
         .spyOn(EditorHandler.prototype, 'getItems')
         .mockReturnValueOnce([makeLeafDeferred({ file: mockFile })]);
 
-      sut.addWorkspaceEnvLists(inputInfo);
+      const result = sut.buildWorkspaceEnvList(
+        mockWorkspace,
+        mockVault,
+        mockApp.viewRegistry,
+        sut.handlerRegistry,
+        mockSettings,
+      );
 
-      expect(inputInfo.currentWorkspaceEnvList).toMatchObject({
+      expect(result).toMatchObject({
         openWorkspaceFiles: new Set([mockFile]),
       });
 

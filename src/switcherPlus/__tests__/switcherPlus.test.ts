@@ -152,7 +152,7 @@ describe('switcherPlus', () => {
     });
 
     test('onOpen() should forward to ModeHandler and call super.onOpen()', () => {
-      const mhOnOpenSpy = jest.spyOn(ModeHandler.prototype, 'onOpen');
+      const mhOnOpenSpy = jest.spyOn(ModeHandler.prototype, 'onOpen').mockReturnValue();
 
       const superOnOpenSpy = jest.spyOn(MockSystemSwitcherModal.prototype, 'onOpen');
 

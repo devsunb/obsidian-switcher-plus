@@ -75,7 +75,7 @@ export class InputParser {
     activeLeaf: WorkspaceLeaf,
   ): void {
     const { cleanInput, resolvedCommands } = this.parse(inputInfo.inputText);
-    inputInfo.inputTextSansEscapeChar = cleanInput;
+    inputInfo.cleanInput = cleanInput;
 
     const wasCommandValidated = this.findFirstValidCommand(
       resolvedCommands,

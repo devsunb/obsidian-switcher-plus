@@ -23,7 +23,7 @@ export interface SourcedParsedCommand extends ParsedCommand {
 
 export class InputInfo {
   private parsedCommands: Record<Mode, ParsedCommand>;
-  private _inputTextSansEscapeChar: string = null;
+  private _cleanInput: string = null;
 
   static get defaultParsedCommand(): ParsedCommand {
     return {
@@ -34,7 +34,7 @@ export class InputInfo {
   }
 
   sessionOpts: SessionOpts;
-  readonly currentWorkspaceEnvList: WorkspaceEnvList = {
+  currentWorkspaceEnvList: WorkspaceEnvList = {
     openWorkspaceLeaves: new Set<WorkspaceLeaf>(),
     openWorkspaceFiles: new Set<TFile>(),
     fileBookmarks: new Map<TFile, BookmarksItemInfo[]>(),
@@ -58,12 +58,12 @@ export class InputInfo {
    *
    * @type {string}
    */
-  get inputTextSansEscapeChar(): string {
-    return this._inputTextSansEscapeChar ?? this.inputText;
+  get cleanInput(): string {
+    return this._cleanInput ?? this.inputText;
   }
 
-  set inputTextSansEscapeChar(value: string) {
-    this._inputTextSansEscapeChar = value;
+  set cleanInput(value: string) {
+    this._cleanInput = value;
   }
 
   constructor(
