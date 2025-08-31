@@ -1,20 +1,37 @@
 import { InputParser } from '../inputParser';
 import { HandlerRegistry } from '../handlerRegistry';
-import { CommandDefinition } from '../commandDefinitions';
+import { CommandDefinition, getCommandDefinitions } from '../commandDefinitions';
 import { SwitcherPlusSettings } from 'src/settings';
 import { AnySuggestion, Mode, SuggestionType } from 'src/types';
-import { Handler } from 'src/Handlers/handler';
+import { Handler } from 'src/Handlers';
 import { mock, MockProxy, mockReset } from 'jest-mock-extended';
 import { Chance } from 'chance';
+import { SourcedParsedCommand } from 'src/switcherPlus';
 import {
   editorTrigger,
-  escapeCmdCharTrigger,
-  headingsTrigger,
-  makeInputInfo,
-  relatedItemsTrigger,
   symbolTrigger,
+  workspaceTrigger,
+  standardModeInputFixture,
+  unicodeInputFixture,
+  headingsTrigger,
+  commandTrigger,
+  relatedItemsTrigger,
+  makeFileSuggestion,
+  makeEditorSuggestion,
+  makeLeaf,
+  makePrefixOnlyInputFixture,
+  makeSourcedCmdEmbeddedInputFixture,
+  bookmarksTrigger,
+  symbolActiveTrigger,
+  relatedItemsActiveTrigger,
+  escapeCmdCharTrigger,
+  makeEscapedStandardModeInputFixture,
+  makeEscapedPrefixCommandInputFixture,
+  makeEscapedSourcedCommandInputFixture,
+  vaultTrigger,
+  makeInputInfo,
 } from '@fixtures';
-import { App, WorkspaceLeaf } from 'obsidian';
+import { App, View, Workspace, WorkspaceLeaf } from 'obsidian';
 
 const chance = new Chance();
 
@@ -364,5 +381,358 @@ describe('InputParser', () => {
 
       expect(inputInfo.sessionOpts.useActiveEditorAsSource).toBe(true);
     });
+  });
+
+  describe('Command validation and precedence scenarios', () => {
+    let mockActiveSugg: MockProxy<AnySuggestion>;
+    let mockActiveLeaf: MockProxy<WorkspaceLeaf>;
+    let mockHeadingsHandler: MockHandler;
+    let mockSymbolHandler: MockHandler;
+    let mockRelatedItemsHandler: MockHandler;
+
+    beforeEach(() => {
+      mockActiveSugg = mock<AnySuggestion>();
+      mockActiveLeaf = mock<WorkspaceLeaf>();
+
+      mockHeadingsHandler = new MockHandler(mockApp, mockConfig);
+      mockSymbolHandler = new MockHandler(mockApp, mockConfig);
+      mockRelatedItemsHandler = new MockHandler(mockApp, mockConfig);
+
+      // Setup the handler registry to return the correct mock handler based on the mode
+      mockHandlerRegistry.getHandler.mockImplementation((identifier) => {
+        if (identifier === Mode.HeadingsList) return mockHeadingsHandler;
+        if (identifier === Mode.SymbolList) return mockSymbolHandler;
+        if (identifier === Mode.RelatedItemsList) return mockRelatedItemsHandler;
+        return null;
+      });
+    });
+
+    test('should fall back to a prefix command if a sourced command is invalid', () => {
+      const parser = createParser();
+      const inputInfo = makeInputInfo({
+        inputText: `${headingsTrigger}query ${symbolTrigger}term`,
+      });
+
+      mockSymbolHandler.validateCommand.mockReturnValue({ isValidated: false });
+      mockHeadingsHandler.validateCommand.mockReturnValue({ isValidated: true });
+
+      parser.parseInputForMode(inputInfo, mockActiveSugg, mockActiveLeaf);
+
+      // Sourced command was attempted first
+      expect(mockSymbolHandler.validateCommand).toHaveBeenCalled();
+
+      // Prefix command was attempted second and its query includes the invalid sourced command
+      expect(mockHeadingsHandler.validateCommand).toHaveBeenCalledWith(
+        expect.anything(),
+        0,
+        `query ${symbolTrigger}term`,
+        mockActiveSugg,
+        mockActiveLeaf,
+      );
+    });
+
+    test('should prioritize and validate a sourced command over a prefix command', () => {
+      const parser = createParser();
+      const inputInfo = makeInputInfo({
+        inputText: `${headingsTrigger}query ${symbolTrigger}term`,
+      });
+
+      mockSymbolHandler.validateCommand.mockReturnValue({ isValidated: true });
+      mockHeadingsHandler.validateCommand.mockReturnValue({ isValidated: true });
+
+      parser.parseInputForMode(inputInfo, mockActiveSugg, mockActiveLeaf);
+
+      expect(mockSymbolHandler.validateCommand).toHaveBeenCalled();
+      expect(mockHeadingsHandler.validateCommand).not.toHaveBeenCalled();
+    });
+
+    test('should only validate the first of multiple sourced commands', () => {
+      const parser = createParser();
+      const inputInfo = makeInputInfo({
+        inputText: `query ${symbolTrigger}one ${relatedItemsTrigger}two`,
+      });
+
+      mockSymbolHandler.validateCommand.mockReturnValue({ isValidated: true });
+      mockRelatedItemsHandler.validateCommand.mockReturnValue({ isValidated: true });
+
+      parser.parseInputForMode(inputInfo, mockActiveSugg, mockActiveLeaf);
+
+      expect(mockSymbolHandler.validateCommand).toHaveBeenCalled();
+      expect(mockRelatedItemsHandler.validateCommand).not.toHaveBeenCalled();
+    });
+
+    test('should pass the active suggestion to sourced commands for validation', () => {
+      const parser = createParser();
+      const inputInfo = makeInputInfo({ inputText: `${symbolTrigger}term` });
+
+      mockSymbolHandler.validateCommand.mockReturnValue({ isValidated: true });
+
+      parser.parseInputForMode(inputInfo, mockActiveSugg, mockActiveLeaf);
+
+      expect(mockSymbolHandler.validateCommand).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(Number),
+        'term',
+        mockActiveSugg, // Verify the active suggestion is passed as context
+        mockActiveLeaf,
+      );
+    });
+
+    test('should not trigger a prefix command if it is not at the start of the input', () => {
+      const parser = createParser();
+      const inputInfo = makeInputInfo({
+        inputText: `some text ${headingsTrigger}query`,
+      });
+
+      mockHeadingsHandler.validateCommand.mockReturnValue({ isValidated: true });
+
+      parser.parseInputForMode(inputInfo, mockActiveSugg, mockActiveLeaf);
+
+      expect(mockHeadingsHandler.validateCommand).not.toHaveBeenCalled();
+      expect(inputInfo.mode).toBe(Mode.Standard);
+    });
+  });
+});
+
+describe('InputParser integration tests', () => {
+  const excludedViewType = 'excludedViewType';
+  let sut: InputParser;
+  let mockApp: MockProxy<App>;
+  let mockConfig: MockProxy<SwitcherPlusSettings>;
+  let mockWorkspace: MockProxy<Workspace>;
+
+  const createParser = (config: SwitcherPlusSettings) => {
+    const cmdDefs = getCommandDefinitions(config);
+    HandlerRegistry.reset();
+    HandlerRegistry.initialize(mockApp, config, cmdDefs);
+    return new InputParser(HandlerRegistry.getInstance(), config, cmdDefs);
+  };
+
+  beforeAll(() => {
+    mockWorkspace = mock<Workspace>();
+
+    mockApp = mock<App>({
+      workspace: mockWorkspace,
+    });
+
+    mockConfig = mock<SwitcherPlusSettings>({
+      editorListCommand: editorTrigger,
+      symbolListCommand: symbolTrigger,
+      symbolListActiveEditorCommand: symbolActiveTrigger,
+      workspaceListCommand: workspaceTrigger,
+      headingsListCommand: headingsTrigger,
+      bookmarksListCommand: bookmarksTrigger,
+      commandListCommand: commandTrigger,
+      vaultListCommand: vaultTrigger,
+      relatedItemsListCommand: relatedItemsTrigger,
+      relatedItemsListActiveEditorCommand: relatedItemsActiveTrigger,
+      escapeCmdChar: escapeCmdCharTrigger,
+      excludeViewTypes: [excludedViewType],
+      referenceViews: [],
+    });
+
+    sut = createParser(mockConfig);
+  });
+
+  test.each(unicodeInputFixture)(
+    'should identify unicode triggers for input: "$input" (array data index: $#)',
+    ({
+      editorTrigger: prefixEditorTrigger,
+      symbolTrigger: sourcedSymbolTrigger,
+      input,
+      expected: { mode, parsedInput },
+    }) => {
+      let cmdKey: keyof SwitcherPlusSettings = 'editorListCommand';
+      let cmdInitialValue = mockConfig.editorListCommand;
+      let cmdValue = prefixEditorTrigger;
+
+      if (sourcedSymbolTrigger) {
+        cmdKey = 'symbolListCommand';
+        cmdInitialValue = mockConfig.symbolListCommand;
+        cmdValue = sourcedSymbolTrigger;
+      }
+
+      // Update either editorListCommand or symbolListCommand with the passed in value
+      // based on the above. This is done because the a parser instance has to be created
+      // using the new mode trigger from the fixture for each test run.
+      mockConfig[cmdKey] = cmdValue;
+      const parser = createParser(mockConfig);
+
+      const leaf = makeLeaf();
+      const es = makeEditorSuggestion(leaf, leaf.view.file);
+      const inputInfo = makeInputInfo({ inputText: input });
+
+      parser.parseInputForMode(inputInfo, es, makeLeaf());
+
+      const parsed = inputInfo.parsedCommand().parsedInput;
+      expect(inputInfo.mode).toBe(mode);
+      expect(parsed).toBe(parsedInput);
+
+      mockConfig[cmdKey] = cmdInitialValue;
+    },
+  );
+
+  test.each(makePrefixOnlyInputFixture(Mode.HeadingsList))(
+    'should parse as Prefix Headings mode with both activeSugg and activeLeaf null for input: "$input" (array data index: $#)',
+    ({ input, expected: { mode, isValidated, parsedInput } }) => {
+      const inputInfo = makeInputInfo({ inputText: input });
+
+      sut.parseInputForMode(inputInfo, null, null);
+
+      expect(inputInfo.mode).toBe(mode);
+      expect(inputInfo.inputText).toBe(input);
+
+      const cmd = inputInfo.parsedCommand();
+      expect(cmd.isValidated).toBe(isValidated);
+      expect(cmd.parsedInput).toBe(parsedInput);
+    },
+  );
+
+  test.each(makePrefixOnlyInputFixture(Mode.SymbolList))(
+    'should parse as Sourced Symbol Mode using ACTIVE LEAF for input: "$input" (array data index: $#)',
+    ({ input, expected: { mode, isValidated, parsedInput } }) => {
+      const mockLeaf = makeLeaf();
+      const inputInfo = makeInputInfo({ inputText: input });
+
+      sut.parseInputForMode(inputInfo, null, mockLeaf);
+
+      expect(inputInfo.mode).toBe(mode);
+      expect(inputInfo.inputText).toBe(input);
+
+      const symbolCmd = inputInfo.parsedCommand() as SourcedParsedCommand;
+      expect(symbolCmd.isValidated).toBe(isValidated);
+      expect(symbolCmd.parsedInput).toBe(parsedInput);
+
+      const { source } = symbolCmd;
+      expect(source.isValidSource).toBe(true);
+      expect(source.file).toBe(mockLeaf.view.file);
+      expect(source.leaf).toBe(mockLeaf);
+      expect(source.suggestion).toBe(null);
+    },
+  );
+
+  test.each(makeSourcedCmdEmbeddedInputFixture(Mode.SymbolList))(
+    'should parse as Sourced Symbol Mode with EDITOR SUGGESTION for input: "$input" (array data index: $#)',
+    ({ input, expected: { mode, isValidated, parsedInput } }) => {
+      const leaf = makeLeaf();
+      const editorSuggestion = makeEditorSuggestion(leaf, leaf.view.file);
+
+      const inputInfo = makeInputInfo({ inputText: input });
+
+      sut.parseInputForMode(inputInfo, editorSuggestion, null);
+
+      expect(inputInfo.mode).toBe(mode);
+      expect(inputInfo.inputText).toBe(input);
+
+      const symbolCmd = inputInfo.parsedCommand() as SourcedParsedCommand;
+      expect(symbolCmd.isValidated).toBe(isValidated);
+      expect(symbolCmd.parsedInput).toBe(parsedInput);
+
+      const { source } = symbolCmd;
+      expect(source.isValidSource).toBe(true);
+      expect(source.file).toBe(leaf.view.file);
+      expect(source.leaf).toBe(leaf);
+      expect(source.suggestion).toBe(editorSuggestion);
+    },
+  );
+
+  test.each(makeSourcedCmdEmbeddedInputFixture(Mode.SymbolList))(
+    'should parse as Sourced Symbol Mode with FILE SUGGESTION for input: "$input" (array data index: $#)',
+    ({ input, expected: { mode, isValidated, parsedInput } }) => {
+      const fileSuggestion = makeFileSuggestion(null, [[0, 0]], 0);
+      const inputInfo = makeInputInfo({ inputText: input });
+
+      sut.parseInputForMode(inputInfo, fileSuggestion, null);
+
+      expect(inputInfo.mode).toBe(mode);
+      expect(inputInfo.inputText).toBe(input);
+
+      const symbolCmd = inputInfo.parsedCommand() as SourcedParsedCommand;
+      expect(symbolCmd.isValidated).toBe(isValidated);
+      expect(symbolCmd.parsedInput).toBe(parsedInput);
+
+      const { source } = symbolCmd;
+      expect(source.isValidSource).toBe(true);
+      expect(source.file).toBe(fileSuggestion.file);
+      expect(source.leaf).toBe(null);
+      expect(source.suggestion).toBe(fileSuggestion);
+    },
+  );
+
+  describe('should parse as standard mode', () => {
+    test(`with excluded active view for input: "${symbolTrigger} test"`, () => {
+      const mockLeaf = makeLeaf();
+      const mockView = mockLeaf.view as MockProxy<View>;
+      const input = `${symbolTrigger} test`;
+
+      mockView.getViewType.mockReturnValue(excludedViewType);
+      const inputInfo = makeInputInfo({ inputText: input });
+
+      sut.parseInputForMode(inputInfo, null, mockLeaf);
+
+      expect(inputInfo.mode).toBe(Mode.Standard);
+      expect(inputInfo.inputText).toBe(input);
+      expect(mockView.getViewType).toHaveBeenCalled();
+    });
+
+    test.each(standardModeInputFixture)(
+      'for input: "$input" (array data index: $#)',
+      ({ input, expected: { mode } }) => {
+        const inputInfo = makeInputInfo({ inputText: input });
+
+        sut.parseInputForMode(inputInfo, null, null);
+
+        expect(inputInfo.mode).toBe(mode);
+        expect(inputInfo.inputText).toBe(input);
+      },
+    );
+  });
+
+  describe('should ignore escaped commands triggers', () => {
+    const fileSuggestion = makeFileSuggestion(null, [[0, 0]], 0);
+    const mockLeaf = makeLeaf();
+
+    test.each(makeEscapedStandardModeInputFixture())(
+      'and parse to STANDARD mode for input: "$input" (array data index: $#)',
+      ({ input, expected: { mode, parsedInput } }) => {
+        const inputInfo = makeInputInfo({ inputText: input });
+
+        sut.parseInputForMode(inputInfo, fileSuggestion, mockLeaf);
+
+        expect(inputInfo.mode).toBe(mode);
+        expect(inputInfo.inputText).toBe(input);
+        expect(inputInfo.cleanInput).toBe(parsedInput);
+      },
+    );
+
+    test.each(makeEscapedPrefixCommandInputFixture())(
+      'and parse to PREFIX mode: "$expected.mode" for input: "$input" (array data index: $#)',
+      ({ input, expected: { mode, parsedInput } }) => {
+        const inputInfo = makeInputInfo({ inputText: input });
+
+        sut.parseInputForMode(inputInfo, fileSuggestion, mockLeaf);
+
+        const cmd = inputInfo.parsedCommand(mode);
+        expect(inputInfo.mode).toBe(mode);
+        expect(inputInfo.inputText).toBe(input);
+        expect(cmd.parsedInput).toBe(parsedInput);
+        expect(cmd.isValidated).toBe(true);
+      },
+    );
+
+    test.each(makeEscapedSourcedCommandInputFixture())(
+      'and parse to SOURCED mode: "$expected.mode" for input: "$input" (array data index: $#)',
+      ({ input, expected: { mode, parsedInput } }) => {
+        const inputInfo = makeInputInfo({ inputText: input });
+
+        sut.parseInputForMode(inputInfo, fileSuggestion, mockLeaf);
+
+        const cmd = inputInfo.parsedCommand(mode);
+        expect(inputInfo.mode).toBe(mode);
+        expect(inputInfo.inputText).toBe(input);
+        expect(cmd.parsedInput).toBe(parsedInput);
+        expect(cmd.isValidated).toBe(true);
+      },
+    );
   });
 });

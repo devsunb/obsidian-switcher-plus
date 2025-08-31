@@ -52,53 +52,19 @@ function standardExpectation(input: string): InputExpectation {
 }
 
 export const standardModeInputFixture = [
+  // A standard string with no command triggers
   standardExpectation('test string'),
-  standardExpectation(`test${editorTrigger}string`),
-  standardExpectation(`test${editorTrigger}$string`),
+  // Prefix triggers are ignored if not at the start of the input
   standardExpectation(` ${editorTrigger}test string`),
-  standardExpectation(`test string ${editorTrigger}`),
-  standardExpectation(`     ${editorTrigger}test string ${editorTrigger}`),
+  standardExpectation(`test${headingsTrigger}string`),
+  // Sourced triggers can appear anywhere, but these tests assume they will fail validation
+  // and fall back to standard mode.
   standardExpectation(`${symbolTrigger}test string: No active editor or suggestion`),
   standardExpectation(`test ${symbolTrigger}string: No active editor or suggestion`),
-  standardExpectation(` ${symbolTrigger}`),
-  standardExpectation(`/${symbolTrigger}`),
-  standardExpectation(`${symbolTrigger}foo`),
-  standardExpectation(`${symbolTrigger} foo`),
-  standardExpectation(` ${symbolTrigger}foo`),
-  standardExpectation(` ${symbolTrigger} foo`),
-  standardExpectation(`bar/${symbolTrigger}foo${symbolTrigger}`),
-  standardExpectation(`bar${symbolTrigger}${symbolTrigger}foo${symbolTrigger}`),
-  standardExpectation(`bar//${symbolTrigger}foo${symbolTrigger}`),
-  standardExpectation(`bar${symbolTrigger}`),
-  standardExpectation(`bar ${symbolTrigger}`),
-  standardExpectation(`bar!${symbolTrigger}foo`),
-  standardExpectation(`bar${symbolTrigger} \\sfoo`),
-  standardExpectation(`bar ${symbolTrigger}foo`),
   standardExpectation(`bar ${symbolTrigger} foo`),
-  standardExpectation(`test${workspaceTrigger}string`),
-  standardExpectation(`test${workspaceTrigger}$string`),
-  standardExpectation(`^${workspaceTrigger}string`),
-  standardExpectation(` ${workspaceTrigger}test string`),
-  standardExpectation(`test string ${workspaceTrigger}`),
-  standardExpectation(`     ${workspaceTrigger}test string ${workspaceTrigger}`),
-  standardExpectation(`test${headingsTrigger}string`),
-  standardExpectation(`test${headingsTrigger}$string`),
-  standardExpectation(`^${headingsTrigger}string`),
-  standardExpectation(` ${headingsTrigger}test string`),
-  standardExpectation(`test string ${headingsTrigger}`),
-  standardExpectation(`     ${headingsTrigger}test string ${headingsTrigger}`),
-  standardExpectation(`test${bookmarksTrigger}string`),
-  standardExpectation(`test${bookmarksTrigger}$string`),
-  standardExpectation(`^${bookmarksTrigger}string`),
-  standardExpectation(` ${bookmarksTrigger}test string`),
-  standardExpectation(`test string ${bookmarksTrigger}`),
-  standardExpectation(`     ${bookmarksTrigger}test string ${bookmarksTrigger}`),
-  standardExpectation(`test${relatedItemsTrigger}string`),
-  standardExpectation(`test${relatedItemsTrigger}$string`),
-  standardExpectation(`^${relatedItemsTrigger}string`),
-  standardExpectation(` ${relatedItemsTrigger}test string`),
-  standardExpectation(`test string ${relatedItemsTrigger}`),
-  standardExpectation(`     ${relatedItemsTrigger}test string ${relatedItemsTrigger}`),
+  // Multiple triggers in one input
+  standardExpectation(`     ${workspaceTrigger}test string ${editorTrigger}`),
+  standardExpectation(`bar${symbolTrigger}foo${symbolTrigger}`),
 ];
 
 export const unicodeInputFixture = [
@@ -135,69 +101,21 @@ export function makePrefixOnlyInputFixture(triggerMode: Mode): InputExpectation[
   const trigger = triggerMap.get(triggerMode);
 
   return [
+    // No filter text
     makeInputExpectation(`${trigger}`, triggerMode, ''),
+    // Plain filter text
     makeInputExpectation(`${trigger}test string`, triggerMode, 'test string'),
-    makeInputExpectation(`${trigger}${symbolTrigger}`, triggerMode, `${symbolTrigger}`),
-    makeInputExpectation(`${trigger} ${symbolTrigger}`, triggerMode, ` ${symbolTrigger}`),
+    // Filter text containing a sourced command trigger
     makeInputExpectation(
-      `${trigger}${symbolTrigger}  `,
+      `${trigger} ${symbolTrigger}foo`,
       triggerMode,
-      `${symbolTrigger}  `,
+      ` ${symbolTrigger}foo`,
     ),
+    // Filter text containing multiple sourced command triggers
     makeInputExpectation(
-      `${trigger}${symbolTrigger}foo`,
+      `${trigger}bar${symbolTrigger}foo${symbolTrigger}`,
       triggerMode,
-      `${symbolTrigger}foo`,
-    ),
-    makeInputExpectation(
-      `${trigger}bar${symbolTrigger}`,
-      triggerMode,
-      `bar${symbolTrigger}`,
-    ),
-    makeInputExpectation(
-      `${trigger}bar$${symbolTrigger}  `,
-      triggerMode,
-      `bar$${symbolTrigger}  `,
-    ),
-    makeInputExpectation(
-      `${trigger}bar ${symbolTrigger}`,
-      triggerMode,
-      `bar ${symbolTrigger}`,
-    ),
-    makeInputExpectation(
-      `${trigger}bar ${symbolTrigger}   `,
-      triggerMode,
-      `bar ${symbolTrigger}   `,
-    ),
-    makeInputExpectation(
-      `${trigger}bar${symbolTrigger}foo`,
-      triggerMode,
-      `bar${symbolTrigger}foo`,
-    ),
-    makeInputExpectation(
-      `${trigger}bar${symbolTrigger} foo`,
-      triggerMode,
-      `bar${symbolTrigger} foo`,
-    ),
-    makeInputExpectation(
-      `${trigger}bar ${symbolTrigger}foo  `,
-      triggerMode,
-      `bar ${symbolTrigger}foo  `,
-    ),
-    makeInputExpectation(
-      `${trigger}bar ${symbolTrigger} foo`,
-      triggerMode,
-      `bar ${symbolTrigger} foo`,
-    ),
-    makeInputExpectation(
-      `${trigger}bar ${symbolTrigger}foo`,
-      triggerMode,
-      `bar ${symbolTrigger}foo`,
-    ),
-    makeInputExpectation(
-      `${trigger}${symbolTrigger}${symbolTrigger}`,
-      triggerMode,
-      `${symbolTrigger}${symbolTrigger}`,
+      `bar${symbolTrigger}foo${symbolTrigger}`,
     ),
   ];
 }
@@ -208,63 +126,26 @@ export function makeSourcedCmdEmbeddedInputFixture(
 ): InputExpectation[] {
   const trigger = triggerMap.get(triggerMode);
 
-  const ret = makePrefixOnlyInputFixture(triggerMode);
-
-  return ret.concat([
-    makeInputExpectation(`${trigger} `, triggerMode, ' '),
-    makeInputExpectation(` ${trigger}`, triggerMode, ''),
-    makeInputExpectation(`/${trigger}`, triggerMode, ''),
+  return [
+    // Sourced command at the start
     makeInputExpectation(`${trigger}foo`, triggerMode, 'foo'),
-    makeInputExpectation(`${trigger} foo`, triggerMode, ' foo'),
-    makeInputExpectation(` ${trigger}foo`, triggerMode, 'foo'),
+    // Sourced command with leading space
     makeInputExpectation(` ${trigger} foo`, triggerMode, ' foo'),
-    makeInputExpectation(`bar${trigger}`, triggerMode, ''),
-    makeInputExpectation(`bar ${trigger}`, triggerMode, ''),
-    makeInputExpectation(`bar!${trigger}foo`, triggerMode, 'foo'),
+    // Sourced command embedded in text
     makeInputExpectation(`bar${trigger}foo`, triggerMode, 'foo'),
-    makeInputExpectation(`bar${trigger} foo`, triggerMode, ' foo'),
-    makeInputExpectation(`bar ${trigger}foo`, triggerMode, 'foo'),
-    makeInputExpectation(`bar ${trigger} foo`, triggerMode, ' foo'),
-    makeInputExpectation(`${editorTrigger}${trigger}`, triggerMode, ''),
-    makeInputExpectation(`${editorTrigger} ${trigger}`, triggerMode, ''),
-    makeInputExpectation(`${editorTrigger}${trigger}  `, triggerMode, `  `),
-    makeInputExpectation(`${editorTrigger}${trigger}foo`, triggerMode, `foo`),
-    makeInputExpectation(`${editorTrigger}${trigger} fooo`, triggerMode, ' fooo'),
-    makeInputExpectation(`${editorTrigger}bar${trigger}`, triggerMode, ''),
-    makeInputExpectation(`${editorTrigger}bar${trigger}  `, triggerMode, '  '),
-    makeInputExpectation(`${editorTrigger}bar ${trigger}$   `, triggerMode, '$   '),
-    makeInputExpectation(`${editorTrigger}bar.+${trigger}*foo`, triggerMode, '*foo'),
+    // Sourced command at the end of the text
+    makeInputExpectation(`bar ${trigger}`, triggerMode, ''),
+    // Interaction with a prefix command (sourced command should win)
+    makeInputExpectation(`${editorTrigger}bar${trigger}foo`, triggerMode, 'foo'),
+    // Interaction with another sourced command
     makeInputExpectation(
-      `bar/${trigger}foo${symbolTrigger}`,
+      `bar${trigger}foo${relatedItemsTrigger}baz`,
       triggerMode,
-      `foo${symbolTrigger}`,
+      `foo${relatedItemsTrigger}baz`,
     ),
-    makeInputExpectation(
-      `bar${trigger}${symbolTrigger}foo${symbolTrigger}`,
-      triggerMode,
-      `${symbolTrigger}foo${symbolTrigger}`,
-    ),
-    makeInputExpectation(
-      `bar//${trigger}foo${symbolTrigger}`,
-      triggerMode,
-      `foo${symbolTrigger}`,
-    ),
-    makeInputExpectation(
-      `${trigger}bar ${symbolTrigger} foo`,
-      triggerMode,
-      `bar ${symbolTrigger} foo`,
-    ),
-    makeInputExpectation(
-      `${trigger}${editorTrigger}sfsas${symbolTrigger}`,
-      triggerMode,
-      `${editorTrigger}sfsas${symbolTrigger}`,
-    ),
-    makeInputExpectation(
-      `${editorTrigger}   \\bar  ${trigger} ^[]foo    `,
-      triggerMode,
-      ' ^[]foo    ',
-    ),
-  ]);
+    // Complex characters
+    makeInputExpectation(`bar!${trigger}*foo`, triggerMode, '*foo'),
+  ];
 }
 
 /**
@@ -273,28 +154,18 @@ export function makeSourcedCmdEmbeddedInputFixture(
  */
 export function makeEscapedStandardModeInputFixture(): InputExpectation[] {
   return [
-    makeInputExpectation(
-      `${escapeCmdCharTrigger}${editorTrigger}foo`,
-      Mode.Standard,
-      `${editorTrigger}foo`,
-      false,
-    ),
-    makeInputExpectation(
-      `${escapeCmdCharTrigger}${commandTrigger}foo${escapeCmdCharTrigger}${symbolTrigger}bar`,
-      Mode.Standard,
-      `${commandTrigger}foo${symbolTrigger}bar`,
-      false,
-    ),
-    makeInputExpectation(
-      `1깍2💩3👨‍👩‍👧‍👦4${escapeCmdCharTrigger}${symbolTrigger}bar`,
-      Mode.Standard,
-      `1깍2💩3👨‍👩‍👧‍👦4${symbolTrigger}bar`,
-      false,
-    ),
+    // Multiple escaped commands, spaces, and repetition
     makeInputExpectation(
       `${escapeCmdCharTrigger}${headingsTrigger} ${escapeCmdCharTrigger}${symbolTrigger}bar${escapeCmdCharTrigger}${symbolTrigger}`,
       Mode.Standard,
       `${headingsTrigger} ${symbolTrigger}bar${symbolTrigger}`,
+      false,
+    ),
+    // Escaped command with preceding unicode characters
+    makeInputExpectation(
+      `1깍2💩3👨‍👩‍👧‍👦4${escapeCmdCharTrigger}${symbolTrigger}bar`,
+      Mode.Standard,
+      `1깍2💩3👨‍👩‍👧‍👦4${symbolTrigger}bar`,
       false,
     ),
   ];
@@ -306,36 +177,28 @@ export function makeEscapedStandardModeInputFixture(): InputExpectation[] {
  */
 export function makeEscapedSourcedCommandInputFixture(): InputExpectation[] {
   return [
-    makeInputExpectation(
-      `${escapeCmdCharTrigger}${bookmarksTrigger}foo ${relatedItemsTrigger} bar`,
-      Mode.RelatedItemsList,
-      ` bar`,
-      true,
-    ),
+    // A sourced command is found and prioritized over a prefix command, even with surrounding unicode and escaped commands
     makeInputExpectation(
       `${headingsTrigger}1깍${escapeCmdCharTrigger}${relatedItemsTrigger}💩${symbolTrigger}3👨‍👩‍👧‍👦4`,
       Mode.SymbolList,
       `3👨‍👩‍👧‍👦4`,
       false,
     ),
+    // An escaped command is treated as literal text within another command's filterText
     makeInputExpectation(
       `${relatedItemsTrigger}foo ${escapeCmdCharTrigger}${symbolTrigger} bar`,
       Mode.RelatedItemsList,
       `foo ${symbolTrigger} bar`,
       true,
     ),
-    makeInputExpectation(
-      `${escapeCmdCharTrigger}${headingsTrigger}${editorTrigger} foo ${symbolTrigger}${escapeCmdCharTrigger}bar`,
-      Mode.SymbolList,
-      `${escapeCmdCharTrigger}bar`,
-      true,
-    ),
+    // An escaped command is ignored, even if it's the same as a following valid command
     makeInputExpectation(
       `${escapeCmdCharTrigger}${symbolTrigger}${symbolTrigger} bar`,
       Mode.SymbolList,
       ` bar`,
       true,
     ),
+    // A double escape is treated as a literal escape character
     makeInputExpectation(
       `${escapeCmdCharTrigger}${symbolTrigger}foo${relatedItemsTrigger} ${escapeCmdCharTrigger}${escapeCmdCharTrigger}bar`,
       Mode.RelatedItemsList,

@@ -15,7 +15,6 @@ import { Chance } from 'chance';
 import {
   SwitcherPlusKeymap,
   ModeHandler,
-  SourcedParsedCommand,
   InputInfo,
   HandlerRegistry,
 } from 'src/switcherPlus';
@@ -53,8 +52,6 @@ import {
   editorTrigger,
   symbolTrigger,
   workspaceTrigger,
-  standardModeInputFixture,
-  unicodeInputFixture,
   headingsTrigger,
   makeHeading,
   getHeadings,
@@ -68,17 +65,12 @@ import {
   makeWorkspaceSuggestion,
   makeSymbolSuggestion,
   makeLeaf,
-  makePrefixOnlyInputFixture,
-  makeSourcedCmdEmbeddedInputFixture,
   makeAliasSuggestion,
   bookmarksTrigger,
   makeBookmarkedFileSuggestion,
   symbolActiveTrigger,
   relatedItemsActiveTrigger,
   escapeCmdCharTrigger,
-  makeEscapedStandardModeInputFixture,
-  makeEscapedPrefixCommandInputFixture,
-  makeEscapedSourcedCommandInputFixture,
   vaultTrigger,
   makeVaultSuggestion,
   makeLeafDeferred,
@@ -229,18 +221,6 @@ describe('modeHandler', () => {
     mockDebounce.mockReset();
   });
 
-  test('inputTextForStandardMode() should return processed input with command escape characters removed in standard mode', () => {
-    const input = `${escapeCmdCharTrigger}${editorTrigger}${escapeCmdCharTrigger}${symbolTrigger}`;
-    const expectedInput = `${editorTrigger}${symbolTrigger}`;
-
-    const sut = new ModeHandler(mockApp, mockSettings, mock<SwitcherPlusKeymap>());
-    sut.updateSuggestions(input, null, null);
-
-    const result = sut.inputTextForStandardMode(input);
-
-    expect(result).toBe(expectedInput);
-  });
-
   describe('retrieving input text for fulltext search', () => {
     const mockKeymap = mock<SwitcherPlusKeymap>();
     const mockChooser = mock<Chooser<AnySuggestion>>();
@@ -249,30 +229,6 @@ describe('modeHandler', () => {
     beforeAll(() => {
       HandlerRegistry.reset();
       sut = new ModeHandler(mockApp, mockSettings, mockKeymap);
-    });
-
-    it('should return input text without mode escape char in standard mode', () => {
-      const input = `${escapeCmdCharTrigger}${editorTrigger}`;
-      const expectedInput = `${editorTrigger}`;
-
-      sut.updateSuggestions(input, mockChooser, null);
-
-      expect(sut.inputTextForFulltextSearch()).toMatchObject({
-        mode: Mode.Standard,
-        parsedInput: expectedInput,
-      });
-    });
-
-    test('In custom modes, it should return the filter text without the mode trigger string', () => {
-      const filterText = chance.word();
-      const input = `${headingsTrigger}${filterText}`;
-
-      sut.updateSuggestions(input, mockChooser, null);
-
-      expect(sut.inputTextForFulltextSearch()).toMatchObject({
-        mode: Mode.HeadingsList,
-        parsedInput: filterText,
-      });
     });
 
     test('In sourced modes, it should return the filter text along with the associated sourced file', () => {
@@ -521,251 +477,6 @@ describe('modeHandler', () => {
       mockInputEl.value = 'user typed something';
       sut.setInitialInputForSession(mockInputEl);
       expect(mockInputEl.value).toBe('user typed something'); // should not change
-    });
-  });
-
-  describe('determineRunMode', () => {
-    let sut: ModeHandler;
-
-    beforeAll(() => {
-      sut = new ModeHandler(mockApp, mockSettings, null);
-    });
-
-    it('should reset on falsy input', () => {
-      const input: string = null;
-      const inputInfo = sut.determineRunMode(input, null, null);
-
-      expect(inputInfo.mode).toBe(Mode.Standard);
-      expect(inputInfo.inputText).toBe('');
-    });
-
-    it('should reset state for sourced handlers when there is not a trigger match', () => {
-      const headingSugg = makeHeadingSuggestion(getHeadings()[0], new TFile());
-      const symbolResetSpy = jest.spyOn(SymbolHandler.prototype, 'reset');
-
-      // first call should trigger symbol mode, and clear the other sourced handlers
-      const inputInfo1 = sut.determineRunMode(
-        `${headingsTrigger}${symbolTrigger}`,
-        headingSugg,
-        null,
-      );
-
-      // second call should trigger headings mode and clear all sourced handlers
-      const inputInfo2 = sut.determineRunMode(headingsTrigger, null, null);
-
-      expect(inputInfo1.mode).toBe(Mode.SymbolList);
-      expect(inputInfo2.mode).toBe(Mode.HeadingsList);
-
-      // should have been reset in the second call where headings mode matched
-      expect(symbolResetSpy).toHaveBeenCalled();
-
-      symbolResetSpy.mockRestore();
-    });
-
-    describe('should identify unicode triggers', () => {
-      beforeEach(() => {
-        HandlerRegistry.reset();
-      });
-
-      test.each(unicodeInputFixture)(
-        'for input: "$input" (array data index: $#)',
-        ({ editorTrigger, symbolTrigger, input, expected: { mode, parsedInput } }) => {
-          const s = new SwitcherPlusSettings(null);
-          let cmdSpy: jest.SpyInstance;
-
-          if (editorTrigger) {
-            cmdSpy = jest
-              .spyOn(s, 'editorListCommand', 'get')
-              .mockReturnValue(editorTrigger);
-          }
-
-          if (symbolTrigger) {
-            cmdSpy = jest
-              .spyOn(s, 'symbolListCommand', 'get')
-              .mockReturnValue(symbolTrigger);
-          }
-
-          const mh = new ModeHandler(mockApp, s, null);
-          const leaf = makeLeaf();
-          const es = makeEditorSuggestion(leaf, leaf.view.file);
-
-          const inputInfo = mh.determineRunMode(input, es, makeLeaf());
-          const parsed = inputInfo.parsedCommand().parsedInput;
-
-          expect(cmdSpy).toHaveBeenCalled();
-          expect(inputInfo.mode).toBe(mode);
-          expect(parsed).toBe(parsedInput);
-
-          cmdSpy.mockRestore();
-        },
-      );
-    });
-
-    describe('should parse as standard mode', () => {
-      test(`with excluded active view for input: "${symbolTrigger} test"`, () => {
-        const mockLeaf = makeLeaf();
-        const mockView = mockLeaf.view as MockProxy<View>;
-        const input = `${symbolTrigger} test`;
-
-        mockView.getViewType.mockReturnValue(excludedViewType);
-
-        const inputInfo = sut.determineRunMode(input, null, mockLeaf);
-
-        expect(inputInfo.mode).toBe(Mode.Standard);
-        expect(inputInfo.inputText).toBe(input);
-        expect(mockView.getViewType).toHaveBeenCalled();
-      });
-
-      test.each(standardModeInputFixture)(
-        'for input: "$input" (array data index: $#)',
-        ({ input, expected: { mode } }) => {
-          const inputInfo = sut.determineRunMode(input, null, null);
-
-          expect(inputInfo.mode).toBe(mode);
-          expect(inputInfo.inputText).toBe(input);
-        },
-      );
-    });
-
-    describe.each(
-      // exclude sourced modes (modes that require a source file) since they
-      // are handled separately
-      modeHandlingData.filter((v) => !v.isSourcedCmd),
-    )(
-      '$title: should parse as Mode: $mode using trigger: $trigger',
-      ({ mode: triggerMode }) => {
-        test.each(makePrefixOnlyInputFixture(triggerMode))(
-          'with both activeSugg and activeLeaf null for input: "$input" (array data index: $#)',
-          ({ input, expected: { mode, isValidated, parsedInput } }) => {
-            const inputInfo = sut.determineRunMode(input, null, null);
-
-            expect(inputInfo.mode).toBe(mode);
-            expect(inputInfo.inputText).toBe(input);
-
-            const cmd = inputInfo.parsedCommand();
-            expect(cmd.isValidated).toBe(isValidated);
-            expect(cmd.parsedInput).toBe(parsedInput);
-          },
-        );
-      },
-    );
-
-    describe.each(
-      // include only the sourced modes (mode that require a source file)
-      modeHandlingData.filter((v) => v.isSourcedCmd),
-    )(
-      '$title: should parse as Sourced Mode: $mode using trigger: $trigger',
-      ({ mode: triggerMode }) => {
-        const embeddedCases = makeSourcedCmdEmbeddedInputFixture(triggerMode);
-
-        test.each(makePrefixOnlyInputFixture(triggerMode))(
-          'with ACTIVE LEAF for input: "$input" (array data index: $#)',
-          ({ input, expected: { mode, isValidated, parsedInput } }) => {
-            const mockLeaf = makeLeaf();
-            const inputInfo = sut.determineRunMode(input, null, mockLeaf);
-
-            expect(inputInfo.mode).toBe(mode);
-            expect(inputInfo.inputText).toBe(input);
-
-            const symbolCmd = inputInfo.parsedCommand() as SourcedParsedCommand;
-            expect(symbolCmd.isValidated).toBe(isValidated);
-            expect(symbolCmd.parsedInput).toBe(parsedInput);
-
-            const { source } = symbolCmd;
-            expect(source.isValidSource).toBe(true);
-            expect(source.file).toBe(mockLeaf.view.file);
-            expect(source.leaf).toBe(mockLeaf);
-            expect(source.suggestion).toBe(null);
-          },
-        );
-
-        test.each(embeddedCases)(
-          'with FILE SUGGESTION for input: "$input" (array data index: $#)',
-          ({ input, expected: { mode, isValidated, parsedInput } }) => {
-            const fileSuggestion = makeFileSuggestion(null, [[0, 0]], 0);
-
-            const inputInfo = sut.determineRunMode(input, fileSuggestion, null);
-
-            expect(inputInfo.mode).toBe(mode);
-            expect(inputInfo.inputText).toBe(input);
-
-            const symbolCmd = inputInfo.parsedCommand() as SourcedParsedCommand;
-            expect(symbolCmd.isValidated).toBe(isValidated);
-            expect(symbolCmd.parsedInput).toBe(parsedInput);
-
-            const { source } = symbolCmd;
-            expect(source.isValidSource).toBe(true);
-            expect(source.file).toBe(fileSuggestion.file);
-            expect(source.leaf).toBe(null);
-            expect(source.suggestion).toBe(fileSuggestion);
-          },
-        );
-
-        test.each(embeddedCases)(
-          'with EDITOR SUGGESTION for input: "$input" (array data index: $#)',
-          ({ input, expected: { mode, isValidated, parsedInput } }) => {
-            const leaf = makeLeaf();
-            const editorSuggestion = makeEditorSuggestion(leaf, leaf.view.file);
-
-            const inputInfo = sut.determineRunMode(input, editorSuggestion, null);
-
-            expect(inputInfo.mode).toBe(mode);
-            expect(inputInfo.inputText).toBe(input);
-
-            const symbolCmd = inputInfo.parsedCommand() as SourcedParsedCommand;
-            expect(symbolCmd.isValidated).toBe(isValidated);
-            expect(symbolCmd.parsedInput).toBe(parsedInput);
-
-            const { source } = symbolCmd;
-            expect(source.isValidSource).toBe(true);
-            expect(source.file).toBe(leaf.view.file);
-            expect(source.leaf).toBe(leaf);
-            expect(source.suggestion).toBe(editorSuggestion);
-          },
-        );
-      },
-    );
-
-    describe('should ignore escaped commands triggers', () => {
-      const fileSuggestion = makeFileSuggestion(null, [[0, 0]], 0);
-      const mockLeaf = makeLeaf();
-
-      test.each(makeEscapedStandardModeInputFixture())(
-        'and parse to STANDARD mode for input: "$input" (array data index: $#)',
-        ({ input, expected: { mode, parsedInput } }) => {
-          const inputInfo = sut.determineRunMode(input, fileSuggestion, mockLeaf);
-
-          expect(inputInfo.mode).toBe(mode);
-          expect(inputInfo.inputText).toBe(input);
-          expect(inputInfo.inputTextSansEscapeChar).toBe(parsedInput);
-        },
-      );
-
-      test.each(makeEscapedPrefixCommandInputFixture())(
-        'and parse to PREFIX mode: "$expected.mode" for input: "$input" (array data index: $#)',
-        ({ input, expected: { mode, parsedInput } }) => {
-          const inputInfo = sut.determineRunMode(input, fileSuggestion, mockLeaf);
-
-          const cmd = inputInfo.parsedCommand(mode);
-          expect(inputInfo.mode).toBe(mode);
-          expect(inputInfo.inputText).toBe(input);
-          expect(cmd.parsedInput).toBe(parsedInput);
-          expect(cmd.isValidated).toBe(true);
-        },
-      );
-
-      test.each(makeEscapedSourcedCommandInputFixture())(
-        'and parse to SOURCED mode: "$expected.mode" for input: "$input" (array data index: $#)',
-        ({ input, expected: { mode, parsedInput } }) => {
-          const inputInfo = sut.determineRunMode(input, fileSuggestion, mockLeaf);
-
-          const cmd = inputInfo.parsedCommand(mode);
-          expect(inputInfo.mode).toBe(mode);
-          expect(inputInfo.inputText).toBe(input);
-          expect(cmd.parsedInput).toBe(parsedInput);
-          expect(cmd.isValidated).toBe(true);
-        },
-      );
     });
   });
 
