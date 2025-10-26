@@ -1,8 +1,8 @@
 import SwitcherPlusPlugin from 'src/main';
 import { createSwitcherPlus, HandlerRegistry, ModeHandler } from 'src/switcherPlus';
 import { getSystemSwitcherInstance } from 'src/utils';
-import { mock, mockClear, MockProxy } from 'jest-mock-extended';
-import { App, Chooser, QuickSwitcherPluginInstance, Scope } from 'obsidian';
+import { mock, mockClear, mockFn, MockProxy } from 'jest-mock-extended';
+import { App, Chooser, Platform, QuickSwitcherPluginInstance, Scope } from 'obsidian';
 import { Chance } from 'chance';
 import { SwitcherPlusSettings } from 'src/settings';
 import {
@@ -37,8 +37,10 @@ class MockSystemSwitcherModal {
   scope: Scope;
   modalEl: HTMLElement;
   inputEl: HTMLInputElement;
+  app: App;
 
-  constructor() {
+  constructor(app: App) {
+    this.app = app;
     this.chooser = mockChooser;
     this.scope = mockScope;
     this.modalEl = mockModalEl;
@@ -59,6 +61,9 @@ class MockSystemSwitcherModal {
     this.updateSuggestions();
   }
   onOpen(): void {
+    /* noop */
+  }
+  close(): void {
     /* noop */
   }
   onClose(): void {
@@ -86,6 +91,19 @@ describe('switcherPlus', () => {
   beforeAll(() => {
     mockApp = mock<App>();
     mockPlugin = mock<SwitcherPlusPlugin>({ app: mockApp });
+
+    // Setup mocks for commands and hotkey manager
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    mockApp.commands = {
+      listCommands: jest.fn(),
+      executeCommandById: jest.fn(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    mockApp.hotkeyManager = {
+      getHotkeys: jest.fn(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
 
     const config = new SwitcherPlusSettings(mockPlugin);
     mockPlugin.options = config;
@@ -156,10 +174,20 @@ describe('switcherPlus', () => {
 
       const superOnOpenSpy = jest.spyOn(MockSystemSwitcherModal.prototype, 'onOpen');
 
+      window.addEventListener =
+        mockFn<(typeof window)['addEventListener']>().mockReturnValue();
+
       sut.onOpen();
 
       expect(mhOnOpenSpy).toHaveBeenCalled();
       expect(superOnOpenSpy).toHaveBeenCalled();
+      expect(window.addEventListener).toHaveBeenCalledWith(
+        'keydown',
+        expect.any(Function),
+        {
+          capture: true,
+        },
+      );
 
       mhOnOpenSpy.mockReset();
       superOnOpenSpy.mockRestore();
@@ -170,10 +198,23 @@ describe('switcherPlus', () => {
 
       const superOnCloseSpy = jest.spyOn(MockSystemSwitcherModal.prototype, 'onClose');
 
+      window.addEventListener =
+        mockFn<(typeof window)['addEventListener']>().mockReturnValue();
+      window.removeEventListener =
+        mockFn<(typeof window)['removeEventListener']>().mockReturnValue();
+
+      sut.onOpen();
       sut.onClose();
 
       expect(mhOnCloseSpy).toHaveBeenCalled();
       expect(superOnCloseSpy).toHaveBeenCalled();
+      expect(window.removeEventListener).toHaveBeenCalledWith(
+        'keydown',
+        expect.any(Function),
+        {
+          capture: true,
+        },
+      );
 
       mhOnCloseSpy.mockReset();
       superOnCloseSpy.mockRestore();
@@ -353,6 +394,449 @@ describe('switcherPlus', () => {
       expect(superGetSuggestionSpy).toHaveBeenCalledWith(expectedInput);
 
       superGetSuggestionSpy.mockRestore();
+    });
+
+    describe('handleGlobalHotkey', () => {
+      const createMockKeyboardEvent = (
+        key: string,
+        modifiers: {
+          ctrlKey?: boolean;
+          metaKey?: boolean;
+          altKey?: boolean;
+          shiftKey?: boolean;
+        } = {},
+      ) => {
+        return {
+          key,
+          ctrlKey: modifiers.ctrlKey || false,
+          metaKey: modifiers.metaKey || false,
+          altKey: modifiers.altKey || false,
+          shiftKey: modifiers.shiftKey || false,
+          preventDefault: jest.fn(),
+          stopPropagation: jest.fn(),
+        } as unknown as KeyboardEvent;
+      };
+
+      beforeEach(() => {
+        window.addEventListener = jest.fn();
+        window.removeEventListener = jest.fn();
+      });
+
+      test('should execute command when hotkey matches with single key', () => {
+        const commandId = 'test-command';
+        const mockCommand = {
+          id: commandId,
+          name: 'Test Command',
+        };
+
+        (mockApp.commands.listCommands as jest.Mock).mockReturnValue([mockCommand]);
+        (mockApp.hotkeyManager.getHotkeys as jest.Mock).mockReturnValue([
+          { modifiers: [], key: 'k' },
+        ]);
+        mockApp.commands.executeCommandById = jest.fn();
+
+        // Capture the event handler
+        let keydownHandler: ((evt: KeyboardEvent) => void) | undefined;
+        (window.addEventListener as jest.Mock).mockImplementation(
+          (event: string, handler: (evt: KeyboardEvent) => void) => {
+            if (event === 'keydown') {
+              keydownHandler = handler;
+            }
+          },
+        );
+
+        sut.onOpen();
+
+        // Create a keyboard event
+        const evt = createMockKeyboardEvent('k');
+
+        const preventDefaultSpy = jest.spyOn(evt, 'preventDefault');
+        const stopPropagationSpy = jest.spyOn(evt, 'stopPropagation');
+        const closeSpy = jest.spyOn(sut, 'close').mockImplementation();
+
+        // Call the handler
+        keydownHandler?.(evt);
+
+        expect(preventDefaultSpy).toHaveBeenCalled();
+        expect(stopPropagationSpy).toHaveBeenCalled();
+        expect(closeSpy).toHaveBeenCalled();
+        expect(mockApp.commands.executeCommandById).toHaveBeenCalledWith(commandId);
+
+        preventDefaultSpy.mockRestore();
+        stopPropagationSpy.mockRestore();
+        closeSpy.mockRestore();
+      });
+
+      test('should execute command when hotkey matches with modifiers', () => {
+        const commandId = 'test-command-with-mods';
+        const mockCommand = {
+          id: commandId,
+          name: 'Test Command',
+        };
+
+        (mockApp.commands.listCommands as jest.Mock).mockReturnValue([mockCommand]);
+        (mockApp.hotkeyManager.getHotkeys as jest.Mock).mockReturnValue([
+          { modifiers: ['Ctrl', 'Shift'], key: 'p' },
+        ]);
+        mockApp.commands.executeCommandById = jest.fn();
+
+        let keydownHandler: ((evt: KeyboardEvent) => void) | undefined;
+        (window.addEventListener as jest.Mock).mockImplementation(
+          (event: string, handler: (evt: KeyboardEvent) => void) => {
+            if (event === 'keydown') {
+              keydownHandler = handler;
+            }
+          },
+        );
+
+        sut.onOpen();
+
+        const evt = createMockKeyboardEvent('p', { ctrlKey: true, shiftKey: true });
+
+        const closeSpy = jest.spyOn(sut, 'close').mockImplementation();
+
+        keydownHandler?.(evt);
+
+        expect(closeSpy).toHaveBeenCalled();
+        expect(mockApp.commands.executeCommandById).toHaveBeenCalledWith(commandId);
+
+        closeSpy.mockRestore();
+      });
+
+      test('should handle Mod modifier on macOS', () => {
+        const originalPlatform = Object.getOwnPropertyDescriptor(Platform, 'isMacOS');
+        Object.defineProperty(Platform, 'isMacOS', { value: true, configurable: true });
+
+        const commandId = 'test-command-mod';
+        const mockCommand = {
+          id: commandId,
+          name: 'Test Command',
+        };
+
+        (mockApp.commands.listCommands as jest.Mock).mockReturnValue([mockCommand]);
+        (mockApp.hotkeyManager.getHotkeys as jest.Mock).mockReturnValue([
+          { modifiers: ['Mod'], key: 'k' },
+        ]);
+        mockApp.commands.executeCommandById = jest.fn();
+
+        let keydownHandler: ((evt: KeyboardEvent) => void) | undefined;
+        (window.addEventListener as jest.Mock).mockImplementation(
+          (event: string, handler: (evt: KeyboardEvent) => void) => {
+            if (event === 'keydown') {
+              keydownHandler = handler;
+            }
+          },
+        );
+
+        sut.onOpen();
+
+        const evt = createMockKeyboardEvent('k', { metaKey: true });
+
+        const closeSpy = jest.spyOn(sut, 'close').mockImplementation();
+
+        keydownHandler?.(evt);
+
+        expect(mockApp.commands.executeCommandById).toHaveBeenCalledWith(commandId);
+
+        closeSpy.mockRestore();
+        if (originalPlatform) {
+          Object.defineProperty(Platform, 'isMacOS', originalPlatform);
+        }
+      });
+
+      test('should handle Mod modifier on Windows/Linux', () => {
+        const originalPlatform = Object.getOwnPropertyDescriptor(Platform, 'isMacOS');
+        Object.defineProperty(Platform, 'isMacOS', { value: false, configurable: true });
+
+        const commandId = 'test-command-mod';
+        const mockCommand = {
+          id: commandId,
+          name: 'Test Command',
+        };
+
+        (mockApp.commands.listCommands as jest.Mock).mockReturnValue([mockCommand]);
+        (mockApp.hotkeyManager.getHotkeys as jest.Mock).mockReturnValue([
+          { modifiers: ['Mod'], key: 'k' },
+        ]);
+        mockApp.commands.executeCommandById = jest.fn();
+
+        let keydownHandler: ((evt: KeyboardEvent) => void) | undefined;
+        (window.addEventListener as jest.Mock).mockImplementation(
+          (event: string, handler: (evt: KeyboardEvent) => void) => {
+            if (event === 'keydown') {
+              keydownHandler = handler;
+            }
+          },
+        );
+
+        sut.onOpen();
+
+        const evt = createMockKeyboardEvent('k', { ctrlKey: true });
+
+        const closeSpy = jest.spyOn(sut, 'close').mockImplementation();
+
+        keydownHandler?.(evt);
+
+        expect(mockApp.commands.executeCommandById).toHaveBeenCalledWith(commandId);
+
+        closeSpy.mockRestore();
+        if (originalPlatform) {
+          Object.defineProperty(Platform, 'isMacOS', originalPlatform);
+        }
+      });
+
+      test('should not execute command when key does not match', () => {
+        const commandId = 'test-command';
+        const mockCommand = {
+          id: commandId,
+          name: 'Test Command',
+        };
+
+        (mockApp.commands.listCommands as jest.Mock).mockReturnValue([mockCommand]);
+        (mockApp.hotkeyManager.getHotkeys as jest.Mock).mockReturnValue([
+          { modifiers: [], key: 'k' },
+        ]);
+        mockApp.commands.executeCommandById = jest.fn();
+
+        let keydownHandler: ((evt: KeyboardEvent) => void) | undefined;
+        (window.addEventListener as jest.Mock).mockImplementation(
+          (event: string, handler: (evt: KeyboardEvent) => void) => {
+            if (event === 'keydown') {
+              keydownHandler = handler;
+            }
+          },
+        );
+
+        sut.onOpen();
+
+        const evt = createMockKeyboardEvent('j');
+
+        const closeSpy = jest.spyOn(sut, 'close').mockImplementation();
+
+        keydownHandler?.(evt);
+
+        expect(closeSpy).not.toHaveBeenCalled();
+        expect(mockApp.commands.executeCommandById).not.toHaveBeenCalled();
+
+        closeSpy.mockRestore();
+      });
+
+      test('should not execute command when modifiers do not match', () => {
+        const commandId = 'test-command';
+        const mockCommand = {
+          id: commandId,
+          name: 'Test Command',
+        };
+
+        (mockApp.commands.listCommands as jest.Mock).mockReturnValue([mockCommand]);
+        (mockApp.hotkeyManager.getHotkeys as jest.Mock).mockReturnValue([
+          { modifiers: ['Ctrl'], key: 'k' },
+        ]);
+        mockApp.commands.executeCommandById = jest.fn();
+
+        let keydownHandler: ((evt: KeyboardEvent) => void) | undefined;
+        (window.addEventListener as jest.Mock).mockImplementation(
+          (event: string, handler: (evt: KeyboardEvent) => void) => {
+            if (event === 'keydown') {
+              keydownHandler = handler;
+            }
+          },
+        );
+
+        sut.onOpen();
+
+        const evt = createMockKeyboardEvent('k');
+
+        const closeSpy = jest.spyOn(sut, 'close').mockImplementation();
+
+        keydownHandler?.(evt);
+
+        expect(closeSpy).not.toHaveBeenCalled();
+        expect(mockApp.commands.executeCommandById).not.toHaveBeenCalled();
+
+        closeSpy.mockRestore();
+      });
+
+      test('should handle commands with no hotkeys', () => {
+        const commandId = 'test-command';
+        const mockCommand = {
+          id: commandId,
+          name: 'Test Command',
+        };
+
+        (mockApp.commands.listCommands as jest.Mock).mockReturnValue([mockCommand]);
+        (mockApp.hotkeyManager.getHotkeys as jest.Mock).mockReturnValue(null);
+        mockApp.commands.executeCommandById = jest.fn();
+
+        let keydownHandler: ((evt: KeyboardEvent) => void) | undefined;
+        (window.addEventListener as jest.Mock).mockImplementation(
+          (event: string, handler: (evt: KeyboardEvent) => void) => {
+            if (event === 'keydown') {
+              keydownHandler = handler;
+            }
+          },
+        );
+
+        sut.onOpen();
+
+        const evt = createMockKeyboardEvent('k');
+
+        const closeSpy = jest.spyOn(sut, 'close').mockImplementation();
+
+        keydownHandler?.(evt);
+
+        expect(closeSpy).not.toHaveBeenCalled();
+        expect(mockApp.commands.executeCommandById).not.toHaveBeenCalled();
+
+        closeSpy.mockRestore();
+      });
+
+      test('should handle commands with non-array hotkeys', () => {
+        const commandId = 'test-command';
+        const mockCommand = {
+          id: commandId,
+          name: 'Test Command',
+        };
+
+        (mockApp.commands.listCommands as jest.Mock).mockReturnValue([mockCommand]);
+        (mockApp.hotkeyManager.getHotkeys as jest.Mock).mockReturnValue(
+          'invalid' as unknown,
+        );
+        mockApp.commands.executeCommandById = jest.fn();
+
+        let keydownHandler: ((evt: KeyboardEvent) => void) | undefined;
+        (window.addEventListener as jest.Mock).mockImplementation(
+          (event: string, handler: (evt: KeyboardEvent) => void) => {
+            if (event === 'keydown') {
+              keydownHandler = handler;
+            }
+          },
+        );
+
+        sut.onOpen();
+
+        const evt = createMockKeyboardEvent('k');
+
+        const closeSpy = jest.spyOn(sut, 'close').mockImplementation();
+
+        keydownHandler?.(evt);
+
+        expect(closeSpy).not.toHaveBeenCalled();
+        expect(mockApp.commands.executeCommandById).not.toHaveBeenCalled();
+
+        closeSpy.mockRestore();
+      });
+
+      test('should handle multiple commands and find the matching one', () => {
+        const commandId1 = 'test-command-1';
+        const commandId2 = 'test-command-2';
+        const mockCommands = [
+          { id: commandId1, name: 'Test Command 1' },
+          { id: commandId2, name: 'Test Command 2' },
+        ];
+
+        (mockApp.commands.listCommands as jest.Mock).mockReturnValue(mockCommands);
+        (mockApp.hotkeyManager.getHotkeys as jest.Mock)
+          .mockReturnValueOnce([{ modifiers: ['Ctrl'], key: 'a' }])
+          .mockReturnValueOnce([{ modifiers: ['Ctrl'], key: 'b' }]);
+        mockApp.commands.executeCommandById = jest.fn();
+
+        let keydownHandler: ((evt: KeyboardEvent) => void) | undefined;
+        (window.addEventListener as jest.Mock).mockImplementation(
+          (event: string, handler: (evt: KeyboardEvent) => void) => {
+            if (event === 'keydown') {
+              keydownHandler = handler;
+            }
+          },
+        );
+
+        sut.onOpen();
+
+        const evt = createMockKeyboardEvent('b', { ctrlKey: true });
+
+        const closeSpy = jest.spyOn(sut, 'close').mockImplementation();
+
+        keydownHandler?.(evt);
+
+        expect(mockApp.commands.executeCommandById).toHaveBeenCalledWith(commandId2);
+
+        closeSpy.mockRestore();
+      });
+
+      test('should handle case-insensitive key matching', () => {
+        const commandId = 'test-command';
+        const mockCommand = {
+          id: commandId,
+          name: 'Test Command',
+        };
+
+        (mockApp.commands.listCommands as jest.Mock).mockReturnValue([mockCommand]);
+        (mockApp.hotkeyManager.getHotkeys as jest.Mock).mockReturnValue([
+          { modifiers: [], key: 'K' }, // Uppercase
+        ]);
+        mockApp.commands.executeCommandById = jest.fn();
+
+        let keydownHandler: ((evt: KeyboardEvent) => void) | undefined;
+        (window.addEventListener as jest.Mock).mockImplementation(
+          (event: string, handler: (evt: KeyboardEvent) => void) => {
+            if (event === 'keydown') {
+              keydownHandler = handler;
+            }
+          },
+        );
+
+        sut.onOpen();
+
+        const evt = createMockKeyboardEvent('k');
+
+        const closeSpy = jest.spyOn(sut, 'close').mockImplementation();
+
+        keydownHandler?.(evt);
+
+        expect(mockApp.commands.executeCommandById).toHaveBeenCalledWith(commandId);
+
+        closeSpy.mockRestore();
+      });
+
+      test('should handle all modifier combinations', () => {
+        const commandId = 'test-command';
+        const mockCommand = {
+          id: commandId,
+          name: 'Test Command',
+        };
+
+        (mockApp.commands.listCommands as jest.Mock).mockReturnValue([mockCommand]);
+        (mockApp.hotkeyManager.getHotkeys as jest.Mock).mockReturnValue([
+          { modifiers: ['Ctrl', 'Meta', 'Alt', 'Shift'], key: 'k' },
+        ]);
+        mockApp.commands.executeCommandById = jest.fn();
+
+        let keydownHandler: ((evt: KeyboardEvent) => void) | undefined;
+        (window.addEventListener as jest.Mock).mockImplementation(
+          (event: string, handler: (evt: KeyboardEvent) => void) => {
+            if (event === 'keydown') {
+              keydownHandler = handler;
+            }
+          },
+        );
+
+        sut.onOpen();
+
+        const evt = createMockKeyboardEvent('k', {
+          ctrlKey: true,
+          metaKey: true,
+          altKey: true,
+          shiftKey: true,
+        });
+
+        const closeSpy = jest.spyOn(sut, 'close').mockImplementation();
+
+        keydownHandler?.(evt);
+
+        expect(mockApp.commands.executeCommandById).toHaveBeenCalledWith(commandId);
+
+        closeSpy.mockRestore();
+      });
     });
   });
 });
